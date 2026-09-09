@@ -1,0 +1,144 @@
+/**
+ * REST client.
+ *
+ * The session cookie is HttpOnly, so there is no token in JavaScript to steal;
+ * every request just sends credentials. Errors carry a translation key, which
+ * is what the UI shows - the server never dictates the player's language.
+ */
+
+class ApiError extends Error {
+  constructor(status, code, message, details) {
+    super(message || code);
+    this.status = status;
+    this.code = code || 'error.generic';
+    this.details = details;
+  }
+}
+
+async function request(path, { method = 'GET', body, signal, raw = false } = {}) {
+  let response;
+  try {
+    response = await fetch(path, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+      credentials: 'same-origin',
+      signal,
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') throw error;
+    throw new ApiError(0, 'error.network', error.message);
+  }
+
+  if (raw) return response;
+  if (response.status === 204) return null;
+
+  const text = await response.text();
+  let payload = null;
+  if (text) {
+    try { payload = JSON.parse(text); } catch { payload = { message: text }; }
+  }
+  if (!response.ok) {
+    throw new ApiError(response.status, payload?.code, payload?.message, payload?.details);
+  }
+  return payload;
+}
+
+/**
+ * Cached sign-in state.
+ *
+ * Optional account syncs (storing the chosen language, for instance) consult
+ * this instead of firing a request that would 401 for a signed-out visitor and
+ * fill the console with errors for an entirely expected situation.
+ */
+let authenticated = false;
+
+export const api = {
+  ApiError,
+  isAuthenticated: () => authenticated,
+  get: (path, options) => request(path, { ...options, method: 'GET' }),
+  post: (path, body, options) => request(path, { ...options, method: 'POST', body }),
+  patch: (path, body, options) => request(path, { ...options, method: 'PATCH', body }),
+  delete: (path, options) => request(path, { ...options, method: 'DELETE' }),
+  raw: (path, options) => request(path, { ...options, raw: true }),
+
+  // --- auth ---------------------------------------------------------------
+  register: async (data) => {
+    const result = await request('/api/auth/register', { method: 'POST', body: data });
+    authenticated = true;
+    return result;
+  },
+  login: async (identifier, password) => {
+    const result = await request('/api/auth/login', { method: 'POST', body: { identifier, password } });
+    authenticated = true;
+    return result;
+  },
+  logout: async () => {
+    authenticated = false;
+    return request('/api/auth/logout', { method: 'POST' });
+  },
+  me: async () => {
+    const result = await request('/api/auth/me');
+    authenticated = Boolean(result?.user);
+    return result;
+  },
+  updateMe: (data) => request('/api/auth/me', { method: 'PATCH', body: data }),
+  changePassword: (currentPassword, newPassword) =>
+    request('/api/auth/password', { method: 'POST', body: { currentPassword, newPassword } }),
+  forgotPassword: (email) => request('/api/auth/password/forgot', { method: 'POST', body: { email } }),
+  resetPassword: (token, newPassword) =>
+    request('/api/auth/password/reset', { method: 'POST', body: { token, newPassword } }),
+  verifyEmail: (token) => request('/api/auth/email/verify', { method: 'POST', body: { token } }),
+  resendVerification: () => request('/api/auth/email/resend', { method: 'POST' }),
+  sessions: () => request('/api/auth/sessions'),
+  revokeSession: (id) => request(`/api/auth/sessions/${id}`, { method: 'DELETE' }),
+  revokeAllSessions: () => request('/api/auth/sessions/revoke-all', { method: 'POST' }),
+  exportData: () => request('/api/auth/export'),
+  deleteAccount: (password) => request('/api/auth/delete', { method: 'POST', body: { password } }),
+
+  // --- game ---------------------------------------------------------------
+  status: () => request('/api/status'),
+  worlds: () => request('/api/worlds'),
+  world: (id) => request(`/api/worlds/${id}`),
+  worldStatus: (id) => request(`/api/worlds/${id}/status`),
+  terrain: (id) => request(`/api/worlds/${id}/terrain`, { raw: true }),
+  characters: () => request('/api/characters'),
+  createCharacter: (data) => request('/api/characters', { method: 'POST', body: data }),
+  character: (id) => request(`/api/characters/${id}`),
+  deleteCharacter: (id) => request(`/api/characters/${id}`, { method: 'DELETE' }),
+  port: (worldId, portId, characterId) =>
+    request(`/api/worlds/${worldId}/ports/${portId}${characterId ? `?characterId=${characterId}` : ''}`),
+  priceHistory: (worldId, portId, goodId) =>
+    request(`/api/worlds/${worldId}/ports/${portId}/prices/${goodId}`),
+  chatHistory: (worldId, channel = 'global') =>
+    request(`/api/worlds/${worldId}/chat?channel=${encodeURIComponent(channel)}`),
+  leaderboard: (worldId, board) => request(`/api/worlds/${worldId}/leaderboard?board=${board}`),
+  discoveries: (worldId) => request(`/api/worlds/${worldId}/discoveries`),
+  goods: (lang) => request(`/api/data/goods${lang ? `?lang=${lang}` : ''}`),
+  shipData: () => request('/api/data/ships'),
+  crewData: () => request('/api/data/crew'),
+  factions: () => request('/api/data/factions'),
+
+  // --- admin --------------------------------------------------------------
+  adminRoles: () => request('/api/admin/roles'),
+  adminPermissions: () => request('/api/admin/permissions'),
+  adminCreateRole: (data) => request('/api/admin/roles', { method: 'POST', body: data }),
+  adminUpdateRole: (id, data) => request(`/api/admin/roles/${id}`, { method: 'PATCH', body: data }),
+  adminDeleteRole: (id) => request(`/api/admin/roles/${id}`, { method: 'DELETE' }),
+  adminDuplicateRole: (id, key, name) =>
+    request(`/api/admin/roles/${id}/duplicate`, { method: 'POST', body: { key, name } }),
+  adminUsers: (query = '') => request(`/api/admin/users${query}`),
+  adminUser: (id) => request(`/api/admin/users/${id}`),
+  adminUserSecurity: (id) => request(`/api/admin/users/${id}/security`),
+  adminTriggerReset: (id) => request(`/api/admin/users/${id}/reset-password`, { method: 'POST' }),
+  adminRevokeSessions: (id) => request(`/api/admin/users/${id}/revoke-sessions`, { method: 'POST' }),
+  adminBan: (id, days, reason) => request(`/api/admin/users/${id}/ban`, { method: 'POST', body: { days, reason } }),
+  adminUnban: (id) => request(`/api/admin/users/${id}/unban`, { method: 'POST' }),
+  adminAssignRole: (userId, roleId) => request(`/api/admin/users/${userId}/roles/${roleId}`, { method: 'POST' }),
+  adminRemoveRole: (userId, roleId) => request(`/api/admin/users/${userId}/roles/${roleId}`, { method: 'DELETE' }),
+  adminAudit: (query = '') => request(`/api/admin/audit${query}`),
+  adminSystem: () => request('/api/admin/system'),
+  adminCloudflare: () => request('/api/admin/integrations/cloudflare'),
+};
+
+export { ApiError };

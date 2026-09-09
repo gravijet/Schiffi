@@ -56,14 +56,16 @@ export function registerAuthRoutes(router) {
     return { ok: true };
   }, { auth: false });
 
+  /**
+   * Current session. Answers 200 with `user: null` when signed out rather than
+   * 401: this is the "am I signed in?" probe every page load makes, and a 401
+   * would fill the browser console with errors for an expected state.
+   */
   router.get('/api/auth/me', async (ctx) => {
+    if (!ctx.user) return { user: null, roles: [], permissions: [] };
     const { permissions, roles } = await permissionsFor(ctx.user.id);
-    return {
-      user: ctx.user,
-      roles,
-      permissions: [...permissions],
-    };
-  });
+    return { user: ctx.user, roles, permissions: [...permissions] };
+  }, { auth: false });
 
   router.patch('/api/auth/me', async (ctx) => {
     const body = await ctx.body();

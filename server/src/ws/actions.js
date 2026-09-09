@@ -34,10 +34,19 @@ const HANDLERS = {
   'code.redeem': actions.redeem,
 };
 
-/** Actions after which the player's cached ship state must be recomputed. */
+/**
+ * Actions after which the player's cached state must be recomputed and pushed.
+ * Anything that moves coins, cargo, crew or the ship belongs here - the client
+ * never computes those numbers itself, so if the server does not send them the
+ * HUD silently goes stale.
+ */
 const REFRESH_AFTER = new Set([
-  'trade.buy', 'trade.sell', 'ship.buy', 'ship.repair', 'ship.upgrade',
-  'ship.switch', 'crew.hire', 'crew.dismiss', 'crew.pay', 'port.dock', 'port.leave',
+  'trade.buy', 'trade.sell',
+  'ship.buy', 'ship.repair', 'ship.upgrade', 'ship.switch', 'ship.rename',
+  'crew.hire', 'crew.dismiss', 'crew.pay',
+  'bank.deposit', 'bank.withdraw', 'bank.loan', 'bank.repay',
+  'code.redeem',
+  'port.dock', 'port.leave',
 ]);
 
 export async function dispatchAction(gateway, conn, name, payload) {

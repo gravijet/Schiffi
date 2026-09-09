@@ -1,0 +1,207 @@
+/*
+ * Screen layout.
+ *
+ * The map is the screen. Panels dock to the edges and are sized in a way that
+ * never covers the centre, which is where the ship is. On narrow screens the
+ * side panels become bottom drawers and the docked panels collapse to a bar of
+ * buttons - the same components, laid out for a thumb.
+ */
+
+/* --- top bar ------------------------------------------------------------- */
+#topbar {
+  position: absolute;
+  top: var(--safe-top); left: var(--safe-left); right: var(--safe-right);
+  height: 38px;
+  display: flex; align-items: center; gap: var(--gap);
+  padding: 0 10px;
+  background: var(--topbar-bg);
+  border-bottom: 1px solid var(--panel-border);
+  z-index: 30;
+}
+#topbar .brand {
+  font-size: 13px; letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--header-fg); font-weight: 600;
+}
+.stat {
+  display: flex; align-items: baseline; gap: 5px;
+  padding: 0 8px; border-left: 1px solid var(--sea-600); height: 22px;
+}
+.stat__label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--parchment-dim); }
+.stat__value { font: var(--mono); font-size: 13px; color: var(--parchment); }
+.stat__value.is-flash { animation: flash 0.5s ease; }
+@keyframes flash { 0% { color: var(--brass-400); } 100% { color: var(--parchment); } }
+
+/* --- docked panels ------------------------------------------------------- */
+#panel-left  { top: 46px; left: calc(8px + var(--safe-left)); width: 264px; }
+#panel-right { top: 46px; right: calc(8px + var(--safe-right)); width: 300px; }
+/* Chat sits bottom-left, the action bar bottom-centre and the minimap
+   bottom-right: three docks that cannot collide on a wide screen. */
+#panel-bottom {
+  left: calc(8px + var(--safe-left));
+  bottom: calc(8px + var(--safe-bottom));
+  width: min(460px, 40%); max-height: 40%;
+}
+
+/* --- minimap ------------------------------------------------------------- */
+#minimap-wrap {
+  position: absolute; right: calc(8px + var(--safe-right)); bottom: calc(8px + var(--safe-bottom));
+  z-index: 25;
+  background: var(--panel-bg); border: 1px solid var(--panel-border);
+  border-radius: var(--radius); padding: 4px; box-shadow: var(--panel-shadow);
+}
+#minimap { display: block; width: 200px; height: 125px; image-rendering: pixelated; cursor: pointer; }
+
+/* --- action bar ---------------------------------------------------------- */
+#actionbar {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  bottom: calc(8px + var(--safe-bottom));
+  display: flex; gap: 6px; z-index: 26; flex-wrap: wrap; justify-content: center;
+  max-width: min(520px, calc(100% - 16px));
+}
+#actionbar button { min-width: 82px; }
+
+/* --- performance overlay ------------------------------------------------- */
+#perf {
+  position: absolute; top: 44px; right: calc(8px + var(--safe-right));
+  z-index: 40; font: var(--mono); font-size: 11px;
+  background: var(--overlay-bg); border: 1px solid var(--panel-border);
+  border-radius: var(--radius); padding: 5px 9px;
+  display: grid; grid-template-columns: auto auto; gap: 1px 12px;
+  pointer-events: none;
+}
+#perf .k { color: var(--parchment-dim); }
+#perf .v { text-align: right; }
+
+/* --- chat ---------------------------------------------------------------- */
+#chat-log { height: 190px; overflow-y: auto; font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+.chat-msg { line-height: 1.35; word-break: break-word; }
+.chat-msg__time { color: var(--parchment-dim); font: var(--mono); font-size: 10px; margin-right: 4px; }
+.chat-msg__from { color: var(--brass-300); font-weight: 600; }
+.chat-msg--global .chat-msg__from { color: var(--brass-300); }
+.chat-msg--local  .chat-msg__from { color: var(--good); }
+.chat-msg--port   .chat-msg__from { color: var(--info); }
+.chat-msg--guild  .chat-msg__from { color: #b184d8; }
+.chat-msg--private .chat-msg__from { color: var(--warn); }
+.chat-msg--system { color: var(--parchment-dim); font-style: italic; }
+.chat-msg mark { background: rgba(201,162,39,0.28); color: inherit; border-radius: 2px; padding: 0 2px; }
+
+/* --- virtual joystick ---------------------------------------------------- */
+#joystick {
+  position: absolute; z-index: 35;
+  left: calc(18px + var(--safe-left)); bottom: calc(90px + var(--safe-bottom));
+  width: 118px; height: 118px; border-radius: 50%;
+  border: 2px solid var(--panel-border); background: rgba(13,27,38,0.4);
+  display: none; touch-action: none;
+}
+#joystick .knob {
+  position: absolute; left: 50%; top: 50%;
+  width: 46px; height: 46px; margin: -23px 0 0 -23px;
+  border-radius: 50%; background: rgba(201,162,39,0.55);
+  border: 1px solid var(--brass-400);
+}
+:root[data-touch="on"] #joystick { display: block; }
+
+/* --- language grid ------------------------------------------------------- */
+.lang-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--gap); }
+.lang-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; text-align: left; }
+.lang-btn .native { font-size: 14px; color: var(--parchment); }
+.lang-btn .english { font-size: 11px; color: var(--parchment-dim); }
+.lang-btn.is-active { border-color: var(--brass-500); background: rgba(201,162,39,0.12); }
+
+/* --- main menu ----------------------------------------------------------- */
+#menu-screen {
+  position: fixed; inset: 0; z-index: 70; overflow: auto;
+  background:
+    radial-gradient(circle at 22% 18%, rgba(58,99,123,0.35), transparent 45%),
+    radial-gradient(circle at 78% 82%, rgba(201,162,39,0.14), transparent 42%),
+    var(--sea-900);
+}
+.menu-shell {
+  min-height: 100%; display: grid; grid-template-columns: 300px 1fr;
+  gap: 0; align-items: stretch;
+}
+.menu-nav {
+  border-right: 1px solid var(--panel-border);
+  padding: 24px 16px; display: flex; flex-direction: column; gap: 4px;
+  background: var(--menu-bg);
+}
+.menu-nav .logo { margin-bottom: 20px; }
+.menu-nav .logo h1 { margin: 0; font-size: 30px; letter-spacing: 0.3em; text-transform: uppercase; color: var(--brass-300); }
+.menu-nav .logo p { margin: 4px 0 0; color: var(--parchment-dim); font-size: 12px; letter-spacing: 0.08em; }
+.menu-nav button {
+  background: transparent; border: 1px solid transparent; border-left: 2px solid transparent;
+  text-align: left; padding: 9px 12px; border-radius: 0; color: var(--parchment-dim);
+}
+.menu-nav button:hover { color: var(--parchment); border-left-color: var(--sea-400); background: rgba(255,255,255,0.03); }
+.menu-nav button.is-active { color: var(--brass-300); border-left-color: var(--brass-500); background: rgba(201,162,39,0.08); }
+.menu-nav .spacer { flex: 1; }
+.menu-main { padding: 28px 32px; max-width: 900px; }
+.menu-main h2 { margin: 0 0 4px; font-size: 20px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--brass-300); }
+.menu-main .lede { margin: 0 0 20px; color: var(--parchment-dim); }
+
+.card {
+  border: 1px solid var(--panel-border); border-radius: var(--radius);
+  background: var(--card-bg); padding: 12px; margin-bottom: var(--gap);
+}
+.card__title { font-size: 13px; color: var(--brass-300); margin-bottom: 6px; letter-spacing: 0.06em; text-transform: uppercase; }
+.card--pick { cursor: pointer; }
+.card--pick:hover { border-color: var(--brass-500); }
+.card--pick.is-active { border-color: var(--brass-500); background: rgba(201,162,39,0.1); }
+
+.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--gap); }
+.kv { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; font-size: 12px; }
+.kv dt { color: var(--parchment-dim); } .kv dd { margin: 0; text-align: right; font: var(--mono); }
+
+/* --- responsive ---------------------------------------------------------- */
+@media (max-width: 900px) {
+  .menu-shell { grid-template-columns: 1fr; }
+  .menu-nav { border-right: none; border-bottom: 1px solid var(--panel-border);
+    flex-direction: row; flex-wrap: wrap; padding: 12px; }
+  .menu-nav .logo { width: 100%; margin-bottom: 8px; }
+  .menu-nav .logo h1 { font-size: 22px; }
+  .menu-nav button { border-left: none; border-bottom: 2px solid transparent; padding: 7px 10px; }
+  .menu-nav button.is-active { border-left-color: transparent; border-bottom-color: var(--brass-500); }
+  .menu-nav .spacer { display: none; }
+  .menu-main { padding: 18px 14px; }
+}
+
+@media (max-width: 1100px) {
+  #panel-bottom { width: min(420px, 52%); }
+}
+
+@media (max-width: 760px) {
+  /* Side panels and chat become bottom drawers; the action bar rides above. */
+  #panel-bottom { left: 0; right: 0; width: auto; max-height: 44%; }
+  #actionbar { bottom: calc(50% + 8px); }
+  #panel-bottom.is-collapsed ~ #actionbar { bottom: calc(8px + var(--safe-bottom)); }
+  #panel-left, #panel-right {
+    top: auto; left: 0; right: 0; width: auto;
+    bottom: calc(var(--safe-bottom));
+    max-height: 52%;
+    border-radius: var(--radius) var(--radius) 0 0;
+    transform: translateY(100%);
+    transition: transform 0.2s ease;
+  }
+  #panel-left.is-open, #panel-right.is-open { transform: translateY(0); }
+  #panel-left.is-collapsed, #panel-right.is-collapsed { transform: translateY(100%); }
+  #panel-bottom { max-height: 46%; }
+  #minimap { width: 120px; height: 75px; }
+  #minimap-wrap { bottom: calc(64px + var(--safe-bottom)); }
+  #actionbar button { min-width: 0; padding: 8px 10px; font-size: 12px; }
+  #topbar { height: 34px; gap: 4px; padding: 0 6px; overflow-x: auto; scrollbar-width: none; }
+  #topbar::-webkit-scrollbar { display: none; }
+  #topbar .brand { display: none; }
+  .stat { padding: 0 6px; }
+}
+
+@media (max-width: 480px) {
+  .stat__label { display: none; }
+  #chat-log { height: 140px; }
+}
+
+/* Touch targets stay finger sized on coarse pointers. */
+@media (pointer: coarse) {
+  button, .btn { min-height: 40px; padding: 9px 14px; }
+  .icon-btn { width: 32px; height: 32px; }
+  td, th { padding: 8px 6px; }
+}
