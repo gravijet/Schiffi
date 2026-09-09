@@ -118,6 +118,13 @@ class SqliteDb {
     await previous;
 
     this.conn.exec('BEGIN IMMEDIATE');
+    // A transaction that never finishes is almost always a call that reached
+    // for the shared handle from inside the transaction and is now waiting on
+    // the mutex it holds. Name that instead of hanging silently.
+    const watchdog = setTimeout(() => {
+      console.error('[db] transaction has been open for 15s - a nested call is ' +
+        'probably using the shared database handle instead of the transaction handle');
+    }, 15_000);
     try {
       const result = await fn(this.handle);
       this.conn.exec('COMMIT');
@@ -126,6 +133,7 @@ class SqliteDb {
       try { this.conn.exec('ROLLBACK'); } catch { /* nothing open */ }
       throw error;
     } finally {
+      clearTimeout(watchdog);
       release();
     }
   }

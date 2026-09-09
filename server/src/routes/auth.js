@@ -1,0 +1,153 @@
+/**
+ * Authentication and account endpoints.
+ *
+ * The session token is returned in the body *and* set as an HttpOnly cookie:
+ * the cookie is what the browser client uses (so no token ever touches
+ * JavaScript-readable storage), the body is there for non-browser clients.
+ */
+import * as auth from '../services/auth.js';
+import { badRequest, unauthorized, notFound } from '../http/respond.js';
+import { negotiateLocale } from '@schiffi/shared/i18n/index.js';
+import { permissionsFor } from '../services/rbac.js';
+import config from '../config.js';
+
+const SESSION_COOKIE = 'sid';
+
+function setSessionCookie(ctx, token) {
+  ctx.setCookie(SESSION_COOKIE, token, {
+    maxAge: config.security.sessionTtlDays * 86_400,
+    httpOnly: true,
+    sameSite: 'Lax',
+  });
+}
+
+export function registerAuthRoutes(router) {
+  router.post('/api/auth/register', async (ctx) => {
+    const body = await ctx.body();
+    const locale = body.locale || negotiateLocale(ctx.locale);
+    const result = await auth.register({
+      email: body.email, username: body.username, password: body.password,
+      locale, ip: ctx.ip,
+    });
+    // Registering signs you in; e-mail verification gates multiplayer, not login.
+    const session = await auth.createSession(result.userId, ctx.ip, ctx.req.headers['user-agent']);
+    setSessionCookie(ctx, session.token);
+    return {
+      userId: result.userId,
+      token: session.token,
+      verificationDelivery: result.verification.delivered,
+    };
+  }, { auth: false });
+
+  router.post('/api/auth/login', async (ctx) => {
+    const body = await ctx.body();
+    if (!body.identifier || !body.password) throw badRequest();
+    const result = await auth.login({
+      identifier: body.identifier, password: body.password,
+      ip: ctx.ip, userAgent: ctx.req.headers['user-agent'],
+    });
+    setSessionCookie(ctx, result.token);
+    return result;
+  }, { auth: false });
+
+  router.post('/api/auth/logout', async (ctx) => {
+    if (ctx.token) await auth.logout(ctx.token);
+    ctx.setCookie(SESSION_COOKIE, '', { maxAge: 0 });
+    return { ok: true };
+  }, { auth: false });
+
+  router.get('/api/auth/me', async (ctx) => {
+    const { permissions, roles } = await permissionsFor(ctx.user.id);
+    return {
+      user: ctx.user,
+      roles,
+      permissions: [...permissions],
+    };
+  });
+
+  router.patch('/api/auth/me', async (ctx) => {
+    const body = await ctx.body();
+    await auth.updateProfile(ctx.user.id, {
+      username: body.username, locale: body.locale, theme: body.theme, settings: body.settings,
+    }, ctx.actor);
+    return { ok: true };
+  });
+
+  router.post('/api/auth/password', async (ctx) => {
+    const body = await ctx.body();
+    if (!body.currentPassword || !body.newPassword) throw badRequest();
+    await auth.changePassword({
+      userId: ctx.user.id,
+      currentPassword: body.currentPassword,
+      newPassword: body.newPassword,
+      ip: ctx.ip,
+      keepSessionId: ctx.sessionId,
+    });
+    return { ok: true };
+  });
+
+  router.post('/api/auth/password/forgot', async (ctx) => {
+    const body = await ctx.body();
+    if (!body.email) throw badRequest();
+    await auth.requestPasswordReset({ email: body.email, ip: ctx.ip });
+    // Always the same answer, so the endpoint cannot enumerate accounts.
+    return { ok: true, message: 'error.resetSent' };
+  }, { auth: false });
+
+  router.post('/api/auth/password/reset', async (ctx) => {
+    const body = await ctx.body();
+    if (!body.token || !body.newPassword) throw badRequest();
+    await auth.resetPassword({ token: body.token, newPassword: body.newPassword, ip: ctx.ip });
+    return { ok: true };
+  }, { auth: false });
+
+  router.post('/api/auth/email/verify', async (ctx) => {
+    const body = await ctx.body();
+    if (!body.token) throw badRequest();
+    await auth.verifyEmail(body.token);
+    return { ok: true };
+  }, { auth: false });
+
+  router.post('/api/auth/email/resend', async (ctx) => {
+    const sent = await auth.resendVerification(ctx.user.id);
+    return { ok: true, sent };
+  });
+
+  router.get('/api/auth/sessions', async (ctx) => ({
+    sessions: (await auth.listSessions(ctx.user.id)).map((s) => ({
+      id: s.id,
+      current: s.id === ctx.sessionId,
+      createdAt: Number(s.created_at),
+      lastSeenAt: Number(s.last_seen_at),
+      expiresAt: Number(s.expires_at),
+      ip: s.ip,
+      userAgent: s.user_agent,
+    })),
+  }));
+
+  router.delete('/api/auth/sessions/:id', async (ctx) => {
+    await auth.revokeSession(ctx.user.id, ctx.params.id, ctx.actor);
+    return { ok: true };
+  });
+
+  router.post('/api/auth/sessions/revoke-all', async (ctx) => {
+    const count = await auth.revokeAllSessions(ctx.user.id, ctx.actor, ctx.sessionId);
+    return { ok: true, revoked: count };
+  });
+
+  router.get('/api/auth/export', async (ctx) => {
+    const data = await auth.exportUserData(ctx.user.id);
+    ctx.res.setHeader('Content-Disposition', `attachment; filename="schiffi-export-${ctx.user.id}.json"`);
+    return data;
+  });
+
+  router.post('/api/auth/delete', async (ctx) => {
+    const body = await ctx.body();
+    if (!body.password) throw badRequest();
+    await auth.deleteAccount(ctx.user.id, { password: body.password, actor: ctx.actor });
+    ctx.setCookie(SESSION_COOKIE, '', { maxAge: 0 });
+    return { ok: true };
+  });
+}
+
+export { SESSION_COOKIE };

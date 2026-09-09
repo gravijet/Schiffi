@@ -4,12 +4,17 @@
  * Every privileged action writes a row here.  Failures are logged but never
  * propagate: an audit write must not be able to roll back the action it
  * describes, and a broken log must not take the server down.
+ *
+ * When called from inside a transaction, pass that transaction's handle as
+ * `options.db`.  The SQLite driver serialises access on a single connection,
+ * so reaching for the shared handle mid-transaction would wait on a mutex the
+ * caller itself is holding - a deadlock, not an error.
  */
 import { getDatabase } from '../db/index.js';
 
-export async function audit(actor, action, targetType = null, targetId = null, data = {}) {
+export async function audit(actor, action, targetType = null, targetId = null, data = {}, options = {}) {
   try {
-    const db = getDatabase();
+    const db = options.db ?? getDatabase();
     await db.insert('audit_log', {
       at: Date.now(),
       actor_user_id: actor?.userId ?? null,
