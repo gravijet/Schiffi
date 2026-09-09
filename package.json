@@ -1,0 +1,20 @@
+{
+  "name": "schiffi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Schiffi - 2D online trading, exploration and seafaring strategy game",
+  "workspaces": ["shared", "server", "client"],
+  "engines": { "node": ">=22.5.0" },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:server": "npm run dev --workspace=server",
+    "dev:client": "npm run dev --workspace=client",
+    "build": "npm run build --workspace=client",
+    "start": "npm run start --workspace=server",
+    "migrate": "node server/src/db/migrate.mjs",
+    "seed": "node server/src/db/seed.mjs",
+    "test": "node --test --experimental-sqlite server/test/**/*.test.mjs",
+    "lint": "node scripts/lint.mjs"
+  }
+}
