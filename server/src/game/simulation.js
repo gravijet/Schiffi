@@ -25,7 +25,8 @@ import config from '../config.js';
 import { stepMarkets, recordPriceHistory } from './economy.js';
 import { revealFog, saveFog, loadFog } from './characters.js';
 import { persistWorldTick } from './worldManager.js';
-import { spawnNpcs, stepNpcs } from './npc.js';
+import { spawnNpcs, stepNpcs, reapNpcs } from './npc.js';
+import { sweepAuctions, stepRoutes } from './market.js';
 import { stepWeather } from './weather.js';
 
 /** One real second is one game minute: a full day passes in 24 real minutes. */
@@ -255,6 +256,15 @@ export class Simulation {
       player.inStorm = instance.storms.some((s) => dist(s.x, s.y, player.x, player.y) < s.radius);
     }
 
+    // Player-driven systems that must keep running with nobody watching.
+    this.sinceMarketSweep = (this.sinceMarketSweep ?? 0) + dt;
+    if (this.sinceMarketSweep >= 20) {
+      this.sinceMarketSweep = 0;
+      await sweepAuctions(instance).catch((e) => console.error('[sim] auctions', e.message));
+      await stepRoutes(instance).catch((e) => console.error('[sim] routes', e.message));
+      reapNpcs(instance);
+    }
+
     const hour = Math.floor(instance.gameTimeMs / 3_600_000);
     if (hour > this.gameHour) {
       const hours = Math.min(6, hour - this.gameHour);
@@ -428,13 +438,14 @@ export class Simulation {
         await db.run(
           'UPDATE characters SET x = ?, y = ?, heading = ?, docked = ?, last_seen_at = ?, ' +
           'playtime_ms = playtime_ms + ? WHERE id = ?',
-          [player.x, player.y, player.heading, player.docked ? 1 : 0, Date.now(),
+          [Number(player.x) || 0, Number(player.y) || 0, Number(player.heading) || 0,
+            player.docked ? 1 : 0, Date.now(),
             Date.now() - (player.lastPersist ?? Date.now()), player.characterId]);
         player.lastPersist = Date.now();
 
         if (player.shipId) {
           await db.run('UPDATE ships SET hull = ?, sail = ? WHERE id = ?',
-            [player.hull, player.sail, player.shipId]);
+            [Number(player.hull) || 0, Number(player.sail) || 0, player.shipId]);
         }
         if (player.fogDirty && player.fog) {
           await saveFog(player.characterId, player.fog);

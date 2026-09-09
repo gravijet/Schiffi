@@ -7,6 +7,11 @@
  * next simulation tick rather than at the next reload.
  */
 import * as actions from '../game/actions.js';
+import * as exploration from '../game/exploration.js';
+import * as combat from '../game/combat.js';
+import * as missions from '../game/missions.js';
+import * as social from '../game/social.js';
+import * as market from '../game/market.js';
 import { getDatabase } from '../db/index.js';
 import { loadCharacter, cargoUsage } from '../game/characters.js';
 import { effectiveStats } from '@schiffi/shared/data/ships.js';
@@ -32,6 +37,46 @@ const HANDLERS = {
   'bank.loan': actions.takeLoan,
   'bank.repay': actions.repayLoan,
   'code.redeem': actions.redeem,
+
+  'explore.land': exploration.land,
+  'explore.gather': exploration.gather,
+  'explore.name': exploration.proposeName,
+
+  'combat.fire': combat.fire,
+  'combat.flee': combat.flee,
+  'combat.board': combat.board,
+  'combat.salvage': combat.salvage,
+  'combat.bounty': combat.placeBounty,
+  'ship.arm': combat.armShip,
+
+  'mission.accept': missions.accept,
+  'mission.abandon': missions.abandon,
+  'mission.complete': missions.complete,
+
+  'friend.add': social.addFriend,
+  'friend.accept': social.acceptFriend,
+  'friend.remove': social.removeFriend,
+  'convoy.create': social.createConvoy,
+  'convoy.join': social.joinConvoy,
+  'convoy.leave': social.leaveConvoy,
+  'convoy.invite': social.createConvoy,
+  'guild.create': social.createGuild,
+  'guild.join': social.joinGuild,
+  'guild.leave': social.leaveGuild,
+  'guild.deposit': social.depositGuild,
+  'guild.withdraw': social.withdrawGuild,
+
+  'market.list': market.createListing,
+  'market.buyout': market.buyout,
+  'market.bid': market.bid,
+  'market.cancel': market.cancelListing,
+  'market.buy': market.buyListing,
+  'insurance.buy': market.buyInsurance,
+  'insurance.claim': market.claimInsurance,
+  'route.create': market.createRoute,
+  'route.delete': market.deleteRoute,
+  'outpost.build': market.buildOutpost,
+  'outpost.building': market.buildBuilding,
 };
 
 /**
@@ -47,6 +92,12 @@ const REFRESH_AFTER = new Set([
   'bank.deposit', 'bank.withdraw', 'bank.loan', 'bank.repay',
   'code.redeem',
   'port.dock', 'port.leave',
+  'explore.gather', 'combat.board', 'combat.salvage', 'ship.arm',
+  'mission.accept', 'mission.complete', 'mission.abandon',
+  'guild.create', 'guild.deposit', 'guild.withdraw',
+  'market.list', 'market.buy', 'market.buyout', 'market.bid', 'market.cancel',
+  'insurance.buy', 'insurance.claim', 'route.create', 'route.delete',
+  'outpost.build', 'outpost.building',
 ]);
 
 export async function dispatchAction(gateway, conn, name, payload) {
@@ -90,6 +141,9 @@ export async function refreshPlayer(conn) {
     const { weight } = await cargoUsage(character.ship.id);
     player.cargoWeight = weight;
     player.crewFactor = crewFactorFor(character.crew, stats);
+    player.combatBonus = aggregateCrewBonus(character.crew).combat ?? 1;
+    player.cannons = character.ship.cannons;
+    player.ammunition = character.ship.ammunition;
   }
 
   // The client keeps its own copy of coins and cargo; push the truth.

@@ -67,8 +67,14 @@ export function validatePassword(password, { email, username } = {}) {
   if (value.length < MIN_PASSWORD_LENGTH) return 'error.weakPassword';
   if (value.length > 200) return 'error.validation';
   if (BANNED_PASSWORDS.has(value.toLowerCase())) return 'error.weakPassword';
-  if (email && value.toLowerCase().includes(normEmail(email).split('@')[0])) return 'error.weakPassword';
-  if (username && value.toLowerCase().includes(normUsername(username))) return 'error.weakPassword';
+  // Reject a password that contains the account's own name - but only when
+  // that name is long enough to be meaningful. A one-letter mail local part
+  // ("d@example.org") would otherwise reject almost every password.
+  const lower = value.toLowerCase();
+  const localPart = email ? normEmail(email).split('@')[0] : '';
+  if (localPart.length >= 4 && lower.includes(localPart)) return 'error.weakPassword';
+  const name = username ? normUsername(username) : '';
+  if (name.length >= 4 && lower.includes(name)) return 'error.weakPassword';
   // A single repeated character or a straight run is not a password.
   if (/^(.)\1+$/.test(value)) return 'error.weakPassword';
   if (/^(?:0123456789|abcdefghij|qwertyuiop)/i.test(value)) return 'error.weakPassword';

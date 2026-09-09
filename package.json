@@ -19,7 +19,7 @@
     "build": "npm run build --workspace=client",
     "start": "npm run start --workspace=server",
     "migrate": "node server/src/db/migrate.mjs",
-    "test": "node --experimental-sqlite --test server/test/shared.test.mjs server/test/e2e.test.mjs",
+    "test": "node --experimental-sqlite --test server/test/shared.test.mjs server/test/gameplay.test.mjs server/test/e2e.test.mjs",
     "test:browser": "npm run build --workspace=client && node --experimental-sqlite --test client/test/browser.test.mjs",
     "test:all": "npm run test && npm run test:browser"
   }

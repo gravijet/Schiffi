@@ -203,6 +203,10 @@ export class Gateway {
       stats,
       cargoWeight: weight,
       crewFactor: crewFactorFor(crew, stats),
+      combatBonus: aggregateCrewBonus(crew).combat ?? 1,
+      cannons: character.ship?.cannons ?? 0,
+      ammunition: character.ship?.ammunition ?? 0,
+      reloadedAt: 0,
       docked: character.docked,
       protected: character.protectionUntil ? character.protectionUntil > Date.now() : false,
       input: { x: 0, y: 0 },
@@ -302,10 +306,11 @@ export class Gateway {
       const db = getDatabase();
       await db.run(
         'UPDATE characters SET x = ?, y = ?, heading = ?, docked = ?, last_seen_at = ? WHERE id = ?',
-        [player.x, player.y, player.heading, player.docked ? 1 : 0, Date.now(), player.characterId]);
+        [Number(player.x) || 0, Number(player.y) || 0, Number(player.heading) || 0,
+          player.docked ? 1 : 0, Date.now(), player.characterId]);
       if (player.shipId) {
         await db.run('UPDATE ships SET hull = ?, sail = ? WHERE id = ?',
-          [player.hull, player.sail, player.shipId]);
+          [Number(player.hull) || 0, Number(player.sail) || 0, player.shipId]);
       }
       if (player.fogDirty) await saveFog(player.characterId, player.fog);
     } catch (error) {

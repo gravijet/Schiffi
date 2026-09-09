@@ -19,6 +19,7 @@ import { registerAuthRoutes } from './routes/auth.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerGameRoutes } from './routes/game.js';
 import { registerSystemRoutes } from './routes/system.js';
+import { registerGameplayRoutes, reloadEvents } from './routes/gameplay.js';
 import { MSG } from '@schiffi/shared/net/protocol.js';
 
 const simulations = new Map();   // worldId -> Simulation
@@ -40,10 +41,12 @@ export async function bootstrap({ listen = true } = {}) {
   registerAdminRoutes(http.router);
   registerGameRoutes(http.router, { simulations });
   registerSystemRoutes(http.router, { gateway, simulations });
+  registerGameplayRoutes(http.router, { gateway });
   gateway.attach(http);
 
   // Bring up every world that already has characters, plus a default one.
   const first = await ensureDefaultWorld();
+  await reloadEvents(first);
   await startSimulation(first, gateway);
 
   const existing = await db.all(
@@ -51,6 +54,7 @@ export async function bootstrap({ listen = true } = {}) {
   for (const row of existing) {
     if (simulations.has(String(row.world_id))) continue;
     const instance = await loadWorld(row.world_id);
+    await reloadEvents(instance);
     await startSimulation(instance, gateway);
   }
 

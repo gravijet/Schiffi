@@ -46,14 +46,15 @@ export const ACTIONS = [
   'crew.hire', 'crew.dismiss', 'crew.pay',
   'mission.accept', 'mission.abandon', 'mission.complete',
   'explore.land', 'explore.gather', 'explore.name',
-  'combat.fire', 'combat.flee', 'combat.board',
+  'combat.fire', 'combat.flee', 'combat.board', 'combat.salvage', 'combat.bounty',
+  'ship.arm',
   'bank.deposit', 'bank.withdraw', 'bank.loan', 'bank.repay',
-  'market.list', 'market.bid', 'market.buyout', 'market.cancel',
+  'market.list', 'market.bid', 'market.buyout', 'market.cancel', 'market.buy',
   'guild.create', 'guild.join', 'guild.leave', 'guild.deposit', 'guild.withdraw',
   'convoy.create', 'convoy.join', 'convoy.leave', 'convoy.invite',
   'friend.add', 'friend.remove', 'friend.accept',
   'code.redeem',
-  'route.create', 'route.delete', 'outpost.build',
+  'route.create', 'route.delete', 'outpost.build', 'outpost.building',
   'insurance.buy', 'insurance.claim',
 ];
 

@@ -9,6 +9,7 @@ import { listWorlds, loadWorld, getLoadedWorld, worldMeta, terrainBlob, createWo
 import { listCharacters, createCharacter, loadCharacter } from '../game/characters.js';
 import { marketFor, priceStats } from '../game/economy.js';
 import { crewOffers, creditLimit } from '../game/actions.js';
+import { boardFor } from '../game/missions.js';
 import { chatHistory } from '../ws/chat.js';
 import { codeStats } from '../game/codes.js';
 import { weatherAt } from '../game/weather.js';
@@ -165,10 +166,7 @@ export function registerGameRoutes(router, { simulations }) {
       character = { id: characterId };
     }
 
-    const db = getDatabase();
-    const missions = await db.all(
-      'SELECT id, type, reward, deadline, data FROM missions WHERE world_id = ? AND port_id = ? AND status = ? LIMIT 20',
-      [instance.id, port.id, 'open']);
+    const missions = await boardFor(instance, port);
 
     return {
       port: {
@@ -180,11 +178,7 @@ export function registerGameRoutes(router, { simulations }) {
       facilities: facilitiesFor(port),
       market: await marketFor(instance, port.id, character),
       crewOffers: crewOffers(instance, port, port.size >= 2 ? 10 : 5),
-      missions: missions.map((m) => ({
-        id: m.id, type: m.type, reward: Number(m.reward),
-        deadline: m.deadline ? Number(m.deadline) : null,
-        data: JSON.parse(m.data || '{}'),
-      })),
+      missions,
     };
   });
 

@@ -1,0 +1,457 @@
+/**
+ * Gameplay integration test.
+ *
+ * Exercises the systems that were added after the core loop: going ashore and
+ * claiming a first discovery, contracts, gunnery, companies and the auction
+ * house. It talks to the same authoritative handlers the WebSocket dispatches
+ * to, with a real database and a real world underneath.
+ */
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { rmSync, mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+const ROOT = resolve(import.meta.dirname, '../..');
+const TEST_DB = resolve(ROOT, `data/test-gameplay-${process.pid}.db`);
+
+process.env.NODE_ENV = 'test';
+process.env.PORT = '0';
+process.env.SQLITE_PATH = TEST_DB;
+process.env.DATABASE_URL = '';
+process.env.SESSION_SECRET = 'gameplay-test-'.padEnd(64, 'q');
+process.env.DEFAULT_WORLD_SEED = '13371337';
+process.env.SMTP_HOST = '';
+
+let server;
+let db;
+let instance;
+let userId;
+let characterId;
+
+before(async () => {
+  for (const suffix of ['', '-wal', '-shm']) rmSync(`${TEST_DB}${suffix}`, { force: true });
+  mkdirSync(resolve(ROOT, 'data'), { recursive: true });
+
+  const { bootstrap } = await import('../src/index.js');
+  server = await bootstrap({ listen: false });
+  db = server.db;
+
+  const { getLoadedWorld, loadedWorlds } = await import('../src/game/worldManager.js');
+  instance = loadedWorlds()[0];
+
+  const auth = await import('../src/services/auth.js');
+  const registered = await auth.register({
+    email: 'gameplay@example.org', username: 'Gameplay',
+    password: 'Nordwind-Segel-42', locale: 'de', ip: '127.0.0.1',
+  });
+  userId = registered.userId;
+
+  const { createCharacter } = await import('../src/game/characters.js');
+  characterId = await createCharacter(
+    { userId, worldId: instance.id, name: 'Forscher', mode: 'explorer' }, instance);
+
+  // Put a live player entity in the world, as the gateway would on join.
+  const { loadCharacter } = await import('../src/game/characters.js');
+  const character = await loadCharacter(characterId);
+  const { effectiveStats } = await import('@schiffi/shared/data/ships.js');
+  const stats = effectiveStats(character.ship.classKey, character.ship.upgrades, {});
+  instance.players.set(`p${characterId}`, {
+    netId: `p${characterId}`, kind: 1, characterId: String(characterId), userId: String(userId),
+    displayName: character.name, x: character.x, y: character.y, heading: 0,
+    vx: 0, vy: 0, speed: 0, hull: character.ship.hull, sail: character.ship.sail,
+    maxHull: stats.hull, shipId: character.ship.id, stats, docked: character.docked,
+    input: { x: 0, y: 0 }, combatBonus: 1, protected: false, cargoWeight: 0, crewFactor: 1,
+  });
+});
+
+after(async () => {
+  await server?.shutdown();
+  for (const suffix of ['', '-wal', '-shm']) rmSync(`${TEST_DB}${suffix}`, { force: true });
+});
+
+/** Give the character coins through the database, as a fixture would. */
+async function grant(coins) {
+  await db.run('UPDATE characters SET coins = coins + ? WHERE id = ?', [coins, characterId]);
+}
+
+/** Move the live player and the stored character to a position. */
+async function moveTo(x, y, { docked = false, portId = null } = {}) {
+  const player = instance.players.get(`p${characterId}`);
+  player.x = x; player.y = y; player.docked = docked;
+  await db.run('UPDATE characters SET x = ?, y = ?, docked = ?, current_port_id = ? WHERE id = ?',
+    [x, y, docked ? 1 : 0, portId, characterId]);
+}
+
+// --- exploration -----------------------------------------------------------
+
+test('landing on an uncharted island claims the first discovery exactly once', async () => {
+  const exploration = await import('../src/game/exploration.js');
+  const anchorage = instance.world.anchorages[0];
+  assert.ok(anchorage, 'this world has no uncharted islands to land on');
+
+  await moveTo(anchorage.x, anchorage.y);
+  const first = await exploration.land({ instance, characterId, userId });
+  assert.equal(first.uncharted, true);
+  assert.equal(first.firstDiscovery, true);
+  assert.equal(first.firstDiscoveredBy.player, 'Forscher');
+  assert.ok(first.survey.terrain, 'no survey was produced');
+  assert.ok(first.activities.length > 0, 'nothing can be done on this island');
+
+  // Landing again must not award the discovery a second time.
+  const second = await exploration.land({ instance, characterId, userId });
+  assert.equal(second.firstDiscovery, false);
+  assert.equal(second.firstDiscoveredBy.yours, true);
+
+  const rows = await db.all('SELECT * FROM island_discoveries WHERE world_id = ?', [instance.id]);
+  assert.equal(rows.length, 1, 'the discovery was recorded more than once');
+});
+
+test('landing is refused when the ship is nowhere near a beach', async () => {
+  const exploration = await import('../src/game/exploration.js');
+  await moveTo(200, 200);
+  await assert.rejects(
+    () => exploration.land({ instance, characterId, userId }),
+    (error) => error.code === 'error.tooFar');
+});
+
+test('a shore party brings real cargo aboard and then has to wait', async () => {
+  const exploration = await import('../src/game/exploration.js');
+  const anchorage = instance.world.anchorages[0];
+  await moveTo(anchorage.x, anchorage.y);
+
+  const landing = await exploration.land({ instance, characterId, userId });
+  const activity = landing.activities.find((name) => name !== 'observe_wildlife') ?? landing.activities[0];
+
+  const before = await db.all('SELECT * FROM cargo WHERE ship_id = ?',
+    [instance.players.get(`p${characterId}`).shipId]);
+  const result = await exploration.gather({
+    instance, characterId, userId, payload: { activity },
+  });
+  assert.equal(result.activity, activity);
+
+  if (activity !== 'observe_wildlife') {
+    const after = await db.all('SELECT * FROM cargo WHERE ship_id = ?',
+      [instance.players.get(`p${characterId}`).shipId]);
+    const gainedUnits = result.gained.reduce((sum, entry) => sum + entry.qty, 0);
+    assert.ok(gainedUnits > 0 || result.cargoFull, 'the shore party came back with nothing');
+    assert.ok(after.length >= before.length);
+  }
+
+  // The same spot is on cooldown.
+  await assert.rejects(
+    () => exploration.gather({ instance, characterId, userId, payload: { activity } }),
+    (error) => error.status === 429);
+});
+
+test('only the first discoverer may name the island, and the name is checked', async () => {
+  const exploration = await import('../src/game/exploration.js');
+  const islandId = instance.world.anchorages[0].islandId;
+
+  await assert.rejects(
+    () => exploration.proposeName({ instance, characterId, userId, payload: { islandId, name: '!!' } }),
+    (error) => error.code === 'error.validation');
+
+  const named = await exploration.proposeName({
+    instance, characterId, userId, payload: { islandId, name: 'Neue Hoffnung' },
+  });
+  assert.equal(named.name, 'Neue Hoffnung');
+  assert.equal(named.status, 'approved');
+
+  // A name that looks like an advert waits for a moderator instead.
+  const other = instance.world.anchorages.find((a) => a.islandId !== islandId);
+  if (other) {
+    await db.insert('island_discoveries', {
+      world_id: instance.id, island_id: other.islandId, user_id: userId,
+      character_id: characterId, player_name: 'Forscher',
+      discovered_at: Date.now(), name_status: 'none',
+    });
+    const flagged = await exploration.proposeName({
+      instance, characterId, userId, payload: { islandId: other.islandId, name: 'Join discord now' },
+    });
+    assert.equal(flagged.status, 'pending');
+  }
+});
+
+// --- progression -----------------------------------------------------------
+
+test('experience and levels come from what the character actually did', async () => {
+  const row = await db.get('SELECT xp, level FROM characters WHERE id = ?', [characterId]);
+  assert.ok(Number(row.xp) > 0, 'the first discovery awarded no experience');
+
+  const { evaluateAchievements } = await import('../src/game/progression.js');
+  const unlocked = await evaluateAchievements(characterId);
+  const keys = unlocked.map((entry) => entry.key);
+  assert.ok(keys.includes('first_island'), `expected first_island, got ${keys.join(', ')}`);
+});
+
+// --- missions --------------------------------------------------------------
+
+test('a port posts contracts that can be accepted and completed', async () => {
+  const missions = await import('../src/game/missions.js');
+  const startPort = instance.portsById.get(instance.world.start.portId);
+  await moveTo(startPort.x, startPort.y, { docked: true, portId: startPort.id });
+  await grant(50_000);
+
+  // The shore party filled the little boat earlier; a courier will not carry a
+  // delivery contract as well, so clear the hold first.
+  await db.run('DELETE FROM cargo WHERE ship_id = ?', [instance.players.get(`p${characterId}`).shipId]);
+
+  const board = await missions.boardFor(instance, startPort);
+  assert.ok(board.length > 0, 'the notice board is empty');
+
+  // Pick a contract the starting boat can actually carry - which is the point
+  // of the small-contract guarantee in the generator.
+  const capacity = instance.players.get(`p${characterId}`).stats.cargo;
+  const { goodById } = await import('@schiffi/shared/data/goods.js');
+  const slotsFor = (mission) => {
+    const good = goodById(Number(mission.data.goodId));
+    return good ? good.vol * Number(mission.data.qty) : Infinity;
+  };
+  const delivery = board.find((mission) =>
+    (mission.type === 'delivery' || mission.type === 'supply') && slotsFor(mission) <= capacity);
+  assert.ok(delivery, `no cargo contract fits ${capacity} slots: ` +
+    board.map((m) => `${m.type}/${m.data.qty ?? '-'}`).join(', '));
+
+  const accepted = await missions.accept({
+    instance, characterId, userId, payload: { missionId: delivery.id },
+  });
+  assert.equal(accepted.missionId, delivery.id);
+
+  // The cargo really is in the hold now.
+  const lot = await db.get('SELECT * FROM cargo WHERE ship_id = ? AND good_id = ?',
+    [instance.players.get(`p${characterId}`).shipId, delivery.data.goodId]);
+  assert.ok(lot, 'the contract cargo was never loaded');
+  assert.ok(Number(lot.qty) >= delivery.data.qty);
+
+  // Completing in the wrong port must fail.
+  await assert.rejects(
+    () => missions.complete({ instance, characterId, userId, payload: { missionId: delivery.id } }),
+    (error) => error.code === 'error.notInPort');
+
+  // Move to the destination and complete it.
+  const destination = instance.portsById.get(delivery.data.toPortId);
+  await moveTo(destination.x, destination.y, { docked: true, portId: destination.id });
+  const coinsBefore = Number((await db.get('SELECT coins FROM characters WHERE id = ?', [characterId])).coins);
+  const done = await missions.complete({
+    instance, characterId, userId, payload: { missionId: delivery.id },
+  });
+  assert.equal(done.reward, delivery.reward);
+
+  const coinsAfter = Number((await db.get('SELECT coins FROM characters WHERE id = ?', [characterId])).coins);
+  assert.equal(coinsAfter, coinsBefore + delivery.reward);
+
+  const remaining = await db.get('SELECT * FROM cargo WHERE ship_id = ? AND good_id = ?',
+    [instance.players.get(`p${characterId}`).shipId, delivery.data.goodId]);
+  assert.ok(!remaining || Number(remaining.qty) < Number(lot.qty), 'the cargo was not handed over');
+});
+
+// --- combat ----------------------------------------------------------------
+
+test('guns must be bought before they can be fired', async () => {
+  const combat = await import('../src/game/combat.js');
+  const startPort = instance.portsById.get(instance.world.start.portId);
+  await moveTo(startPort.x, startPort.y, { docked: true, portId: startPort.id });
+
+  const player = instance.players.get(`p${characterId}`);
+  // The starting boat has no gun ports at all.
+  await assert.rejects(
+    () => combat.armShip({ instance, characterId, userId, payload: { cannons: 2 } }),
+    (error) => error.status === 400);
+
+  // Give it a hull that can carry guns, then arm it. The hull value has to be
+  // reset with the class, exactly as buying a ship would set it.
+  const ship = await db.get('SELECT * FROM ships WHERE id = ?', [player.shipId]);
+  const { effectiveStats, shipClass } = await import('@schiffi/shared/data/ships.js');
+  const armoured = shipClass('armored_trader');
+  await db.run("UPDATE ships SET class_key = 'armored_trader', hull = ?, sail = ? WHERE id = ?",
+    [armoured.hull, armoured.sail, ship.id]);
+  player.stats = effectiveStats('armored_trader', {}, {});
+  player.maxHull = player.stats.hull;
+  player.hull = armoured.hull;
+
+  const armed = await combat.armShip({
+    instance, characterId, userId, payload: { cannons: 4, ammunition: 30 },
+  });
+  assert.equal(armed.cannons, 4);
+  assert.equal(armed.ammunition, 30);
+});
+
+test('a broadside damages an NPC and a sinking leaves a wreck', async () => {
+  const combat = await import('../src/game/combat.js');
+  const player = instance.players.get(`p${characterId}`);
+  player.docked = false;
+  await db.run('UPDATE characters SET docked = 0 WHERE id = ?', [characterId]);
+
+  const npc = [...instance.npcs.values()][0];
+  assert.ok(npc, 'no NPC ships in the world');
+  // Bring them alongside each other.
+  npc.x = player.x + 40;
+  npc.y = player.y;
+  npc.hull = 40;
+  npc.maxHull = 200;
+
+  const hullBefore = npc.hull;
+  const shot = await combat.fire({
+    instance, characterId, userId, payload: { targetId: npc.netId, aim: 'hull' },
+  });
+  assert.ok(shot.hullDamage > 0, 'the broadside did nothing');
+  assert.ok(npc.hull < hullBefore || shot.sunk, 'the target took no damage');
+
+  // Firing again immediately hits the reload timer.
+  if (!shot.sunk) {
+    await assert.rejects(
+      () => combat.fire({ instance, characterId, userId, payload: { targetId: npc.netId } }),
+      (error) => error.status === 429);
+  }
+
+  // Keep firing until it goes down, respecting the reload each time.
+  let sunk = shot.sunk;
+  for (let i = 0; i < 8 && !sunk; i++) {
+    player.reloadedAt = 0;
+    const next = await combat.fire({
+      instance, characterId, userId, payload: { targetId: npc.netId, aim: 'hull' },
+    });
+    sunk = next.sunk;
+  }
+  assert.ok(sunk, 'the NPC never sank');
+  assert.ok(sunk.wreckId, 'no wreck was left behind');
+
+  const wreck = await db.get('SELECT * FROM wrecks WHERE id = ?', [sunk.wreckId]);
+  assert.ok(wreck, 'the wreck row is missing');
+  assert.equal(instance.npcs.has(npc.netId), false, 'the sunk NPC is still sailing');
+
+  const stats = await db.get('SELECT battles_won FROM player_stats WHERE character_id = ?', [characterId]);
+  assert.ok(Number(stats.battles_won) >= 1);
+});
+
+test('protected waters and newcomers cannot be attacked', async () => {
+  const combat = await import('../src/game/combat.js');
+  const attacker = instance.players.get(`p${characterId}`);
+
+  const victim = {
+    netId: 'p999999', kind: 1, characterId: '999999', displayName: 'Neuling',
+    x: attacker.x + 30, y: attacker.y, hull: 100, maxHull: 100, sail: 40,
+    docked: false, protected: true, stats: { speed: 40, sail: 40 },
+  };
+  instance.players.set(victim.netId, victim);
+
+  const blocked = combat.canEngage(instance, attacker, victim);
+  assert.ok(blocked, 'a protected newcomer was attackable');
+
+  victim.docked = true;
+  victim.protected = false;
+  assert.ok(combat.canEngage(instance, attacker, victim), 'a docked player was attackable');
+  instance.players.delete(victim.netId);
+});
+
+// --- companies and markets -------------------------------------------------
+
+test('a trading company has a treasury with an auditable ledger', async () => {
+  const social = await import('../src/game/social.js');
+  await grant(100_000);
+
+  const created = await social.createGuild({
+    instance, characterId, userId, payload: { name: 'Nordsee-Kompanie', tag: 'NSK' },
+  });
+  assert.ok(created.guildId);
+
+  await social.depositGuild({ characterId, userId, payload: { amount: 5000, reason: 'seed capital' } });
+  const afterDeposit = await social.guildFor(characterId);
+  assert.equal(afterDeposit.treasury, 5000);
+  assert.equal(afterDeposit.ledger[0].delta, 5000);
+
+  await social.withdrawGuild({ characterId, userId, payload: { amount: 2000, reason: 'wages' } });
+  const afterWithdraw = await social.guildFor(characterId);
+  assert.equal(afterWithdraw.treasury, 3000);
+  assert.equal(afterWithdraw.ledger[0].delta, -2000);
+  assert.equal(afterWithdraw.ledger[0].balance, 3000);
+
+  // Over-withdrawing is refused.
+  await assert.rejects(
+    () => social.withdrawGuild({ characterId, userId, payload: { amount: 999_999 } }),
+    (error) => error.code === 'trade.notEnoughCoins');
+});
+
+test('listing goods removes them from the hold and cancelling returns them', async () => {
+  const market = await import('../src/game/market.js');
+  const { addCargo } = await import('../src/game/characters.js');
+  const player = instance.players.get(`p${characterId}`);
+
+  // A port with an auction house.
+  const bigPort = [...instance.portsById.values()].find((port) => port.size >= 3);
+  assert.ok(bigPort, 'this world has no port large enough for an auction house');
+  await moveTo(bigPort.x, bigPort.y, { docked: true, portId: bigPort.id });
+
+  await db.tx(async (tx) => { await addCargo(tx, player.shipId, 1, 10, 5, 1); });
+  const before = await db.get('SELECT qty FROM cargo WHERE ship_id = ? AND good_id = 1', [player.shipId]);
+  assert.ok(Number(before.qty) >= 10);
+
+  const listing = await market.createListing({
+    instance, characterId, userId, payload: { goodId: 1, qty: 10, unitPrice: 25 },
+  });
+  assert.ok(listing.listingId);
+
+  const afterListing = await db.get('SELECT qty FROM cargo WHERE ship_id = ? AND good_id = 1', [player.shipId]);
+  assert.ok(!afterListing || Number(afterListing.qty) === Number(before.qty) - 10,
+    'the goods were not taken into custody');
+
+  const cancelled = await market.cancelListing({
+    instance, characterId, userId, payload: { listingId: listing.listingId },
+  });
+  assert.equal(cancelled.returned, 10);
+
+  const afterCancel = await db.get('SELECT qty FROM cargo WHERE ship_id = ? AND good_id = 1', [player.shipId]);
+  assert.equal(Number(afterCancel.qty), Number(before.qty));
+});
+
+test('insurance pays only against damage the server recorded', async () => {
+  const market = await import('../src/game/market.js');
+  const player = instance.players.get(`p${characterId}`);
+  const port = [...instance.portsById.values()].find((entry) => entry.size >= 2);
+  await moveTo(port.x, port.y, { docked: true, portId: port.id });
+  await grant(60_000);
+
+  // Repair the ship first: the gunnery test left it battered.
+  const { shipClass: shipClassFor } = await import('@schiffi/shared/data/ships.js');
+  const cls = shipClassFor('armored_trader');
+  await db.run('UPDATE ships SET hull = ?, sail = ? WHERE id = ?', [cls.hull, cls.sail, player.shipId]);
+
+  const policy = await market.buyInsurance({ instance, characterId, userId, payload: { days: 7 } });
+  assert.ok(policy.premium > 0);
+
+  // An undamaged ship cannot claim.
+  await assert.rejects(
+    () => market.claimInsurance({ characterId, userId, payload: { policyId: policy.policyId } }),
+    (error) => error.status === 400);
+
+  // Record real damage, then claim.
+  await db.run('UPDATE ships SET hull = ? WHERE id = ?', [30, player.shipId]);
+  const claim = await market.claimInsurance({
+    characterId, userId, payload: { policyId: policy.policyId },
+  });
+  assert.ok(claim.payout > 0, 'a badly damaged insured ship paid nothing');
+});
+
+test('an automated trade route buys its ship and then runs on its own', async () => {
+  const market = await import('../src/game/market.js');
+  await grant(200_000);
+
+  const ports = [...instance.portsById.values()].slice(0, 2).map((port) => port.id);
+  const route = await market.createRoute({
+    instance, characterId, userId,
+    payload: {
+      name: 'Salzroute', shipClass: 'merchant_ship', waypoints: ports,
+      cargoPlan: [{ goodId: 1, qty: 10 }],
+    },
+  });
+  assert.ok(route.routeId);
+  assert.ok(route.cost > 0, 'the route ship was free');
+
+  // Force the first leg to be due and step the routes.
+  await db.run('UPDATE trade_routes SET next_arrival_at = ? WHERE id = ?', [Date.now() - 1000, route.routeId]);
+  const stepped = await market.stepRoutes(instance);
+  assert.ok(stepped >= 1, 'the route did not run');
+
+  const row = await db.get('SELECT runs, leg_index FROM trade_routes WHERE id = ?', [route.routeId]);
+  assert.equal(Number(row.runs), 1);
+});
