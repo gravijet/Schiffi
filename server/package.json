@@ -1,0 +1,15 @@
+{
+  "name": "@schiffi/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node --experimental-sqlite src/index.js",
+    "dev": "node --experimental-sqlite --watch src/index.js"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "^2.2.0",
+    "@schiffi/shared": "*"
+  }
+}
