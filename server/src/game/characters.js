@@ -64,10 +64,12 @@ export async function createCharacter({ userId, worldId, name, mode }, instance)
     throw new HttpError(400, 'error.validation', 'unknown mode');
   }
 
-  const existing = await db.get(
-    'SELECT id FROM characters WHERE user_id = ? AND world_id = ? AND deleted_at IS NULL',
+  const { count } = await db.get(
+    'SELECT COUNT(*) AS count FROM characters WHERE user_id = ? AND world_id = ? AND deleted_at IS NULL',
     [userId, worldId]);
-  if (existing) throw new HttpError(409, 'error.conflict', 'you already have a character in this world');
+  if (Number(count) >= config.game.maxCharactersPerWorld) {
+    throw new HttpError(409, 'error.characterLimit', 'reached the save-game limit for this world');
+  }
 
   const start = instance.world.start;
   const now = Date.now();

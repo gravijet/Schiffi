@@ -57,6 +57,7 @@ export default {
     quickStart: 'Sofort lossegeln',
     quickStartHint: 'Startet ein Händlerschiff in der offenen Welt. Name, Spielmodus und Welt lassen sich auch später wählen – über „Neues Spiel“.',
     continue: 'Weitersegeln',
+    docs: 'Docs',
   },
   mode: {
     title: 'Spielmodus',
@@ -133,6 +134,8 @@ export default {
     setSail: 'Ablegen',
     map: 'Karte',
     log: 'Logbuch',
+    you: 'Du',
+    clickToSail: 'Klick auf das Wasser setzt den Kurs; das Schiff steuert von selbst dorthin.',
   },
   port: {
     title: 'Hafen',
@@ -855,6 +858,7 @@ export default {
     tooFar: 'Das ist zu weit entfernt.',
     notNavigable: 'Dort kann dein Schiff nicht fahren.',
     pageNotFound: 'Diese Seite gibt es nicht.',
+    characterLimit: 'Du hast bereits die maximale Anzahl an Spielständen in dieser Welt erreicht.',
   },
   pvp: {
     protected: 'Anfängerschutz aktiv',
@@ -1070,5 +1074,12 @@ export default {
     continueIn: 'Weiter in {seconds}s',
     visit: 'Mehr erfahren',
     note: 'Werbung',
+  },
+  fleet: {
+    title: 'Flotte',
+    yourShip: 'Dein Schiff',
+    routeShips: 'Routenschiffe',
+    manageCompany: 'Handelsfirma verwalten',
+    hint: 'Routenschiffe fahren von selbst: Sie kaufen und verkaufen nach Zeitplan zwischen ihren Häfen. Ihr Weg ist auf der Karte als gestrichelte Linie zu sehen, mit einer Uhr am nächsten Hafen.',
   },
 };

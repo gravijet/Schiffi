@@ -110,6 +110,10 @@ export const config = {
     snapshotHz: num(process.env.NET_SNAPSHOT_HZ, 10),
     defaultSeed: process.env.DEFAULT_WORLD_SEED || '',
     maxPlayersPerWorld: num(process.env.MAX_PLAYERS_PER_WORLD, 400),
+    // How many save games (characters) one account may keep in the same
+    // world. Was implicitly 1 - every world after the first was unreachable
+    // once a player had a captain in the one open world.
+    maxCharactersPerWorld: num(process.env.MAX_CHARACTERS_PER_WORLD, 5),
     startingCoins: num(process.env.STARTING_COINS, 5),
     newbieProtectionMinutes: num(process.env.NEWBIE_PROTECTION_MINUTES, 90),
     // Watching a 'reward'-placement advert to the end pays this many coins,

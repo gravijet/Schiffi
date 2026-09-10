@@ -46,6 +46,7 @@ export default {
     quickStart: 'Set sail now',
     quickStartHint: 'Starts a merchant ship in the open world. Name, mode and world can still be chosen later, under “New game”.',
     continue: 'Continue',
+    docs: 'Docs',
   },
   mode: {
     title: 'Game mode',
@@ -90,6 +91,8 @@ export default {
     speed: 'Speed', heading: 'Heading', wind: 'Wind', current: 'Current',
     position: 'Position', region: 'Region', season: 'Season', time: 'Time',
     anchor: 'Drop anchor', setSail: 'Set sail', map: 'Map', log: 'Log book',
+    you: 'You',
+    clickToSail: 'Click on the water to set a course; the ship steers itself there.',
   },
   port: {
     title: 'Port', enter: 'Dock', leave: 'Depart', market: 'Market',
@@ -578,6 +581,7 @@ export default {
     tooFar: 'That is too far away.',
     notNavigable: 'Your ship cannot sail there.',
     pageNotFound: 'This page does not exist.',
+    characterLimit: 'You have already reached the maximum number of save games in this world.',
   },
   pvp: {
     protected: 'Newcomer protection active', protectionEnds: 'Protection ends in {time}',
@@ -790,5 +794,12 @@ export default {
     continueIn: 'Continue in {seconds}s',
     visit: 'Find out more',
     note: 'Advertisement',
+  },
+  fleet: {
+    title: 'Fleet',
+    yourShip: 'Your ship',
+    routeShips: 'Route ships',
+    manageCompany: 'Manage trading firm',
+    hint: 'Route ships run on their own: they buy and sell on a schedule between their ports. Their path shows on the map as a dashed line, with a countdown at the next port.',
   },
 };

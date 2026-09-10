@@ -16,9 +16,11 @@
 import { CELL_SIZE, CELLS_X, CELLS_Y, FOG_CELL_SIZE, FOG_X, FOG_Y } from '@schiffi/shared/world/constants.js';
 import { clamp, clamp01, TAU } from '@schiffi/shared/util/math.js';
 import { UI, FACTION_COLOURS } from './palette.js';
+import { visualForClass, visualForEntity } from './shipVisuals.js';
 
 const MIN_ZOOM = 0.06;
 const MAX_ZOOM = 3.5;
+const DEFAULT_SHIP_VISUAL = { lengthMul: 1, beamMul: 1, masts: 1 };
 
 export class Renderer {
   constructor(canvas, { settings }) {
@@ -39,6 +41,7 @@ export class Renderer {
     this.entities = [];
     this.storms = [];
     this.wrecks = [];
+    this.routes = [];
     this.self = null;
     this.destination = null;
     this.wind = { a: 0, s: 0 };
@@ -83,7 +86,11 @@ export class Renderer {
     this.world = meta;
     this.portIndex = buildSpatialIndex(meta.ports, 4096);
     this.anchorageIndex = buildSpatialIndex(meta.anchorages, 4096);
+    this.portById = new Map(meta.ports.map((port) => [port.id, port]));
   }
+
+  /** Own company's trade routes, as reported by the routes API - not a live entity feed. */
+  setRoutes(routes) { this.routes = routes ?? []; }
 
   setFog(bits) {
     this.fogBits = bits;
@@ -197,9 +204,11 @@ export class Renderer {
     if (g.waves > 0) this.drawWaves(ctx, g);
     this.drawRegions(ctx, g);
     this.drawPorts(ctx, g);
+    this.drawRoutePaths(ctx, g);
     this.drawStorms(ctx, g, dt);
     this.drawWrecks(ctx, g);
     this.drawEntities(ctx, g);
+    this.drawCourseLine(ctx, g);
     this.drawSelf(ctx, g);
     this.drawDestination(ctx);
     if (g.fog > 0) this.drawFog(ctx, g);
@@ -228,14 +237,12 @@ export class Renderer {
     const dw = sw * CELL_SIZE * this.camera.zoom;
     const dh = sh * CELL_SIZE * this.camera.zoom;
 
-    // Smoothing matters when magnified: one image pixel is one terrain cell,
-    // so at close zoom each pixel covers ~24 world units and would otherwise
-    // read as a grid of squares. Zoomed out, nearest-neighbour keeps coasts
-    // crisp instead of blurring islands away.
-    const smooth = g.antialiasing && this.camera.zoom > 0.3;
-    ctx.imageSmoothingEnabled = smooth;
+    // One image pixel is one terrain cell, so nearest-neighbour (no
+    // smoothing) reads as crisp pixel-art coastlines at any zoom - that is
+    // now the default, the same as it always was for the minimap. Smoothing
+    // is opt-in through the antialiasing setting, not forced on near max
+    // zoom the way it used to be.
     ctx.drawImage(this.terrainBitmap, sx, sy, sw, sh, topLeft.x, topLeft.y, dw, dh);
-    ctx.imageSmoothingEnabled = Boolean(g.antialiasing);
   }
 
   /**
@@ -309,14 +316,24 @@ export class Renderer {
 
       const p = this.worldToScreen(port.x, port.y);
       const radius = clamp(2 + port.size * 1.2 * Math.max(0.6, zoom * 2), 2, 12);
+      const colour = FACTION_COLOURS[port.faction] ?? UI.port;
 
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, radius, 0, TAU);
-      ctx.fillStyle = FACTION_COLOURS[port.faction] ?? UI.port;
-      ctx.fill();
+      // A small blocky dock, not a plain dot: a flat square with a
+      // darker-roofed pixel silhouette once there is room to see it.
+      ctx.fillStyle = colour;
+      ctx.fillRect(p.x - radius, p.y - radius, radius * 2, radius * 2);
+      if (radius > 3.5) {
+        ctx.fillStyle = darken(colour, 0.35);
+        ctx.beginPath();
+        ctx.moveTo(p.x - radius, p.y - radius * 0.3);
+        ctx.lineTo(p.x, p.y - radius);
+        ctx.lineTo(p.x + radius, p.y - radius * 0.3);
+        ctx.closePath();
+        ctx.fill();
+      }
       ctx.lineWidth = 1;
       ctx.strokeStyle = UI.portRing;
-      ctx.stroke();
+      ctx.strokeRect(p.x - radius, p.y - radius, radius * 2, radius * 2);
 
       if (showLabels && (port.size >= 2 || zoom > 0.4)) {
         ctx.fillStyle = document.documentElement.dataset.theme === 'light'
@@ -359,16 +376,17 @@ export class Renderer {
       const p = this.worldToScreen(storm.x, storm.y);
       const r = storm.r * this.camera.zoom;
       const intensity = storm.i * g.weatherEffects;
-
-      const gradient = ctx.createRadialGradient(p.x, p.y, r * 0.15, p.x, p.y, r);
       const tint = storm.k === 'ice' ? '198, 216, 228' : storm.k === 'fog' ? '190, 196, 204' : '90, 106, 130';
-      gradient.addColorStop(0, `rgba(${tint}, ${0.42 * intensity})`);
-      gradient.addColorStop(0.7, `rgba(${tint}, ${0.22 * intensity})`);
-      gradient.addColorStop(1, `rgba(${tint}, 0)`);
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, r, 0, TAU);
-      ctx.fill();
+
+      // A flat haze, not a radial gradient glow: three concentric flat-alpha
+      // rings that still read as "denser toward the centre" without the
+      // soft-edged look a gradient would give it.
+      ctx.fillStyle = `rgba(${tint}, ${0.14 * intensity})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, TAU); ctx.fill();
+      ctx.fillStyle = `rgba(${tint}, ${0.16 * intensity})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.66, 0, TAU); ctx.fill();
+      ctx.fillStyle = `rgba(${tint}, ${0.18 * intensity})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.33, 0, TAU); ctx.fill();
 
       if (g.mapDetail > 0.4) {
         ctx.strokeStyle = UI.stormRing;
@@ -398,13 +416,21 @@ export class Renderer {
     ctx.save();
     ctx.strokeStyle = UI.wreck;
     ctx.lineWidth = Math.max(1, 1.4 * zoom);
+    ctx.fillStyle = UI.wreck;
     for (const wreck of this.wrecks) {
       if (wreck.x < bounds.x0 || wreck.x > bounds.x1 || wreck.y < bounds.y0 || wreck.y > bounds.y1) continue;
       const p = this.worldToScreen(wreck.x, wreck.y);
-      // A broken spar: two crossed strokes, no fill, cheap at any zoom.
+      // A blocky broken hull chunk, not just crossed lines: a small flat
+      // jagged quad, still cheap at any zoom.
       ctx.beginPath();
-      ctx.moveTo(p.x - size, p.y - size * 0.45);
-      ctx.lineTo(p.x + size, p.y + size * 0.45);
+      ctx.moveTo(p.x - size, p.y - size * 0.2);
+      ctx.lineTo(p.x - size * 0.2, p.y - size * 0.55);
+      ctx.lineTo(p.x + size * 0.5, p.y - size * 0.1);
+      ctx.lineTo(p.x + size * 0.15, p.y + size * 0.4);
+      ctx.closePath();
+      ctx.fill();
+      // Two broken spars jutting out.
+      ctx.beginPath();
       ctx.moveTo(p.x - size * 0.55, p.y + size * 0.7);
       ctx.lineTo(p.x + size * 0.8, p.y - size * 0.6);
       ctx.stroke();
@@ -424,7 +450,7 @@ export class Renderer {
       if (drawn >= limit) break;
       if (entity.x < bounds.x0 || entity.x > bounds.x1 || entity.y < bounds.y0 || entity.y > bounds.y1) continue;
       const p = this.worldToScreen(entity.x, entity.y);
-      this.drawShip(ctx, p.x, p.y, entity.h, colourFor(entity), zoom, detail, entity);
+      this.drawShip(ctx, p.x, p.y, entity.h, colourFor(entity), zoom, detail, entity, false, visualForEntity(entity));
       drawn++;
     }
     ctx.restore();
@@ -434,7 +460,34 @@ export class Renderer {
   drawSelf(ctx, g) {
     if (!this.self) return;
     const p = this.worldToScreen(this.self.x, this.self.y);
-    this.drawShip(ctx, p.x, p.y, this.self.h, UI.self, this.camera.zoom, Math.max(0.6, g.shipDetail), null, true);
+    this.drawShip(ctx, p.x, p.y, this.self.h, UI.self, this.camera.zoom, Math.max(0.6, g.shipDetail),
+      null, true, visualForClass(this.self.classKey));
+
+    // A ring that never turns off: in a crowd of NPCs and other players, the
+    // own ship must stay unmistakable at a glance, at any zoom.
+    if (this.camera.zoom > 0.18) {
+      const size = clamp(4 + 10 * this.camera.zoom, 3, 16) * (0.7 + Math.max(0.6, g.shipDetail) * 0.5);
+      const pulse = 1 + Math.sin(this.time * 6) * 0.08;
+      ctx.save();
+      ctx.strokeStyle = UI.self;
+      ctx.globalAlpha = 0.55;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, size * 1.8 * pulse, 0, TAU);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // The one label that must never be missing, unlike other entities' names
+    // which only appear once zoomed in.
+    if (this.self.name) {
+      ctx.save();
+      ctx.font = 'bold 11px ui-sans-serif, system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = UI.self;
+      ctx.fillText(this.self.name, p.x, p.y - 20);
+      ctx.restore();
+    }
 
     // Wake, only when moving and only if animations are on.
     if (g.animations && (this.self.v ?? 0) > 4 && this.camera.zoom > 0.25) {
@@ -479,40 +532,145 @@ export class Renderer {
   }
 
   /**
+   * The line from the ship to the click-to-sail waypoint.
+   *
+   * This is the straight intent line, not the raycast-avoidance curve
+   * `steerAroundLand` actually follows around islands - drawing the real
+   * curve would need to duplicate steering logic here for no real benefit;
+   * the straight line already answers "which way am I headed".
+   */
+  drawCourseLine(ctx, g) {
+    if (!this.self || !this.destination) return;
+    const from = this.worldToScreen(this.self.x, this.self.y);
+    const to = this.worldToScreen(this.destination.x, this.destination.y);
+    ctx.save();
+    ctx.strokeStyle = UI.courseLine;
+    ctx.lineWidth = Math.max(1, 1.5 * this.camera.zoom);
+    ctx.setLineDash([6, 10]);
+    ctx.lineDashOffset = -this.time * 30;
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  /**
+   * Trade-route paths.
+   *
+   * A route is server economy state, not a physical ship: it has waypoints
+   * and a real `nextArrivalAt`, but no x/y is ever simulated for it (see
+   * server's stepRoutes, which jumps `leg_index` on arrival instead of
+   * moving anything). So this draws the honest thing - a static path
+   * between the route's own ports, plus a marker and countdown at wherever
+   * it will *actually* arrive next - rather than faking a ship in transit.
+   */
+  drawRoutePaths(ctx, g) {
+    if (!this.world || !this.routes.length || !this.portById) return;
+    const zoom = this.camera.zoom;
+
+    ctx.save();
+    for (const route of this.routes) {
+      const waypoints = route.waypoints ?? [];
+      if (waypoints.length < 2) continue;
+      const points = waypoints
+        .map((portId) => this.portById.get(portId))
+        .filter(Boolean)
+        .map((port) => this.worldToScreen(port.x, port.y));
+      if (points.length < 2) continue;
+
+      ctx.strokeStyle = UI.routePath;
+      ctx.lineWidth = Math.max(1, 1.2 * zoom);
+      ctx.setLineDash([4, 6]);
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      const legIndex = Number(route.legIndex) || 0;
+      const nextPortId = waypoints[(legIndex + 1) % waypoints.length];
+      const nextPort = this.portById.get(nextPortId);
+      if (!nextPort) continue;
+      const p = this.worldToScreen(nextPort.x, nextPort.y);
+      const pulse = 1 + Math.sin(this.time * 5) * 0.15;
+
+      ctx.fillStyle = UI.routeNext;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 4 * pulse, 0, TAU);
+      ctx.fill();
+
+      if (zoom > 0.3 && route.nextArrivalAt) {
+        const countdown = formatCountdown(route.nextArrivalAt - Date.now());
+        if (countdown) {
+          ctx.font = '10px ui-monospace, monospace';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = UI.routeNext;
+          ctx.fillText(countdown, p.x, p.y + 16);
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  /**
    * One ship.
    *
-   * At low zoom this is a triangle, which is all that is legible anyway; at
-   * higher zoom and detail it grows a hull outline and a sail. That is the
-   * entire level-of-detail scheme, and it is why hundreds of ships are cheap.
+   * A blocky, flat-shaded hull rather than a smooth tapered triangle - the
+   * same pixel-art language as `icons.js`: a handful of straight edges, one
+   * flat fill plus one darker waterline band, a hard outline, no gradient.
+   * `visual` (see `shipVisuals.js`) only scales the hull and picks the mast
+   * count, so the LOD scheme stays exactly what it was: a filled silhouette
+   * at any zoom, an outline/masts/waterline once zoom and the `shipDetail`
+   * setting allow it. That is why hundreds of ships stay cheap to draw.
    */
-  drawShip(ctx, x, y, heading, colour, zoom, detail, entity = null, isSelf = false) {
+  drawShip(ctx, x, y, heading, colour, zoom, detail, entity = null, isSelf = false, visual = DEFAULT_SHIP_VISUAL) {
     const size = clamp(4 + 10 * zoom, 3, isSelf ? 16 : 13) * (0.7 + detail * 0.5);
+    const len = size * visual.lengthMul;
+    const beam = size * 0.55 * visual.beamMul;
 
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(heading);
 
+    // A blocky hull: pointed bow, flat stern, square shoulders - not a
+    // smooth-tapered triangle.
     ctx.beginPath();
-    ctx.moveTo(size, 0);
-    ctx.lineTo(-size * 0.7, size * 0.55);
-    if (detail > 0.5 && zoom > 0.3) {
-      ctx.lineTo(-size * 0.45, 0);
-    }
-    ctx.lineTo(-size * 0.7, -size * 0.55);
+    ctx.moveTo(len, 0);
+    ctx.lineTo(len * 0.45, beam);
+    ctx.lineTo(-len * 0.65, beam);
+    ctx.lineTo(-len * 0.85, beam * 0.45);
+    ctx.lineTo(-len * 0.85, -beam * 0.45);
+    ctx.lineTo(-len * 0.65, -beam);
+    ctx.lineTo(len * 0.45, -beam);
     ctx.closePath();
     ctx.fillStyle = colour;
     ctx.fill();
 
     if (detail > 0.35 && zoom > 0.35) {
+      // Flat two-tone shading instead of a gradient: one darker waterline
+      // band along the hull's lower half.
+      ctx.save();
+      ctx.clip();
+      ctx.fillStyle = darken(colour, 0.32);
+      ctx.fillRect(-len, beam * 0.15, len * 2, beam);
+      ctx.restore();
+
       ctx.lineWidth = 1;
-      ctx.strokeStyle = 'rgba(10, 18, 25, 0.75)';
+      ctx.strokeStyle = 'rgba(10, 18, 25, 0.8)';
       ctx.stroke();
-      // A sail: a short perpendicular bar, which reads as rigging at a glance.
+
+      // Mast(s): short perpendicular bars, which read as rigging at a glance.
+      const masts = visual.masts ?? 1;
+      ctx.strokeStyle = 'rgba(236, 227, 210, 0.85)';
+      ctx.lineWidth = Math.max(1, size * 0.13);
       ctx.beginPath();
-      ctx.moveTo(-size * 0.1, -size * 0.75);
-      ctx.lineTo(-size * 0.1, size * 0.75);
-      ctx.strokeStyle = 'rgba(236, 227, 210, 0.8)';
-      ctx.lineWidth = Math.max(1, size * 0.14);
+      for (let m = 0; m < masts; m++) {
+        const mx = masts === 1 ? -len * 0.05 : len * 0.25 - m * len * 0.55;
+        ctx.moveTo(mx, -beam * 0.9);
+        ctx.lineTo(mx, beam * 0.9);
+      }
       ctx.stroke();
     }
     ctx.restore();
@@ -590,17 +748,20 @@ export class Renderer {
     ctx.fillRect(0, 0, this.viewWidth, this.viewHeight);
     ctx.restore();
 
-    // A lantern glow around the ship at night, if lighting is turned up.
+    // A lantern light around the ship at night: flat concentric rings
+    // instead of a soft radial-gradient glow, same "denser toward the
+    // centre" read without a blurred edge.
     if (this.self && g.lighting > 0.4 && darkness > 0.15) {
       const p = this.worldToScreen(this.self.x, this.self.y);
       const radius = 160 * this.camera.zoom + 60;
-      const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius);
-      glow.addColorStop(0, `rgba(240, 212, 120, ${0.16 * g.lighting})`);
-      glow.addColorStop(1, 'rgba(240, 212, 120, 0)');
       ctx.save();
       ctx.globalCompositeOperation = 'screen';
-      ctx.fillStyle = glow;
-      ctx.fillRect(p.x - radius, p.y - radius, radius * 2, radius * 2);
+      ctx.fillStyle = `rgba(240, 212, 120, ${0.05 * g.lighting})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, radius, 0, TAU); ctx.fill();
+      ctx.fillStyle = `rgba(240, 212, 120, ${0.06 * g.lighting})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, radius * 0.6, 0, TAU); ctx.fill();
+      ctx.fillStyle = `rgba(240, 212, 120, ${0.09 * g.lighting})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, radius * 0.28, 0, TAU); ctx.fill();
       ctx.restore();
     }
   }
@@ -690,6 +851,34 @@ export class Renderer {
     ctx.fillText(`${Math.round(this.wind.s ?? 0)} kn`, x, y + size / 2 + 12);
     ctx.restore();
   }
+}
+
+/** Bare "Xm"/"Xs" countdown for a route's next arrival - no words, so it never needs a locale. */
+function formatCountdown(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  const totalSeconds = Math.ceil(ms / 1000);
+  if (totalSeconds >= 3600) return `${Math.ceil(totalSeconds / 3600)}h`;
+  if (totalSeconds >= 60) return `${Math.ceil(totalSeconds / 60)}m`;
+  return `${totalSeconds}s`;
+}
+
+/**
+ * Darken a `#rgb`/`#rrggbb` colour by `amount` (0-1) for flat two-tone hull
+ * shading - no gradient, just a second flat fill in a darker shade of the
+ * same colour. Anything else (an `rgba(...)` string, say) is returned
+ * unchanged rather than mis-parsed.
+ */
+function darken(hex, amount) {
+  if (typeof hex !== 'string' || hex[0] !== '#') return hex;
+  const full = hex.length === 4
+    ? `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}` : hex;
+  const n = parseInt(full.slice(1), 16);
+  if (Number.isNaN(n)) return hex;
+  const scale = 1 - amount;
+  const r = Math.round(((n >> 16) & 255) * scale);
+  const g = Math.round(((n >> 8) & 255) * scale);
+  const b = Math.round((n & 255) * scale);
+  return `rgb(${r}, ${g}, ${b})`;
 }
 
 function colourFor(entity) {

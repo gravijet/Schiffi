@@ -21,18 +21,22 @@ import { combatView } from './panels/combat.js';
 import { guildView } from './panels/guild.js';
 import { exchangeView } from './panels/exchange.js';
 import { companyView } from './panels/company.js';
+import { fleetView } from './panels/fleet.js';
 import { albumView } from './panels/album.js';
 import { Tutorial } from './panels/tutorial.js';
 import { openTradePicker, partnersInHail, onTradeEvent } from './panels/playerTrade.js';
 import { portServicesView } from './panels/warehouse.js';
 import { friendsView } from './panels/friends.js';
+import { icon } from './icons.js';
+import { manualView } from './manual.js';
 
 export class GameUI {
-  constructor({ socket, renderer, onLeave, onRefresh }) {
+  constructor({ socket, renderer, onLeave, onRefresh, refreshRoutes }) {
     this.socket = socket;
     this.renderer = renderer;
     this.onLeave = onLeave;
     this.onRefresh = onRefresh;
+    this.refreshRoutes = refreshRoutes;
     this.character = null;
     this.world = null;
     this.portData = null;
@@ -175,23 +179,56 @@ export class GameUI {
     }
   }
 
-  // --- action bar ---------------------------------------------------------
+  // --- action bar -----------------------------------------------------------
+  //
+  // One flat row of icon buttons for every action that used to be split
+  // between the actionbar and the "Mehr" (more) modal - a captain should see
+  // everything reachable at a glance rather than dig for half of it. Stable
+  // ids, so the buttons stay addressable (grey-out, badges) when the bar is
+  // rebuilt.
+
+  /** One icon + caption button for the bottom bar. */
+  actionButton(id, iconName, label, onClick, { primary = false } = {}) {
+    return h(`button.iconbar__btn${primary ? '.primary' : ''}#${id}`, { onClick, title: label },
+      icon(iconName), h('span.iconbar__label', null, label));
+  }
 
   renderActionbar() {
     clear(this.actionbar);
     const docked = this.character?.docked;
 
-    // Stable ids, so the buttons stay addressable when the bar is rearranged.
     add(this.actionbar,
       docked
-        ? h('button.primary#act-port', { onClick: () => this.leavePort() }, t('port.leave'))
-        : h('button.primary#act-port', { onClick: () => this.dockNearby() }, t('port.enter')),
+        ? this.actionButton('act-port', 'port', t('port.leave'), () => this.leavePort(), { primary: true })
+        : this.actionButton('act-port', 'port', t('port.enter'), () => this.dockNearby(), { primary: true }),
       docked
-        ? h('button#act-market', { onClick: () => this.togglePortPanel() }, t('port.market'))
-        : h('button#act-explore', { onClick: () => goAshore(this) }, t('explore.expedition')),
-      h('button#act-missions', { onClick: () => this.openMissions() }, t('mission.title')),
-      h('button#act-more', { onClick: () => this.openMore() }, t('common.more')),
+        ? this.actionButton('act-market', 'market', t('port.market'), () => this.togglePortPanel())
+        : this.actionButton('act-explore', 'explore', t('explore.expedition'), () => goAshore(this)),
+      this.actionButton('act-missions', 'missions', t('mission.title'), () => this.openMissions()),
+      this.actionButton('act-fleet', 'fleet', t('fleet.title'), () => this.openFleet()),
+      this.actionButton('act-ship', 'ship', t('ship.title'), () => this.toggleShipPanel()),
+      docked
+        ? this.actionButton('act-exchange', 'exchange', t('market.title'), () => this.openExchange())
+        : this.actionButton('act-combat', 'combat', t('combat.title'), () => this.openCombat()),
+      docked ? null
+        : this.actionButton('act-trade', 'trade', t('trade.propose'), () => openTradePicker(this)),
+      this.actionButton('act-chat', 'chat', t('chat.title'), () => this.chatPanel.classList.remove('is-collapsed')),
+      this.actionButton('act-friends', 'friends', t('social.friends'), () => this.openFriends()),
+      this.actionButton('act-guild', 'guild', t('guild.title'), () => this.openGuild()),
+      this.actionButton('act-company', 'company', t('company.title'), () => this.openCompany()),
+      this.actionButton('act-warehouse', 'warehouse', t('warehouse.title'), () => this.openPortServices()),
+      this.actionButton('act-album', 'album', t('explore.album'), () => this.openAlbum()),
+      this.actionButton('act-adreward', 'adreward', t('ads.watchForCoins'), () => this.openAdReward()),
+      this.actionButton('act-tutorial', 'tutorial', t('tutorial.title'), () => this.tutorial.resume()),
+      this.actionButton('act-code', 'code', t('code.title'), () => this.openCodeDialog()),
+      this.actionButton('act-manual', 'manual', t('menu.manual'), () => this.openManual()),
+      this.actionButton('act-settings', 'settings', t('menu.settings'), () => this.openSettings()),
     );
+  }
+
+  openManual() {
+    modal({ title: t('menu.manual'), wide: true, body: manualView(),
+      actions: [{ label: t('common.close') }] });
   }
 
   // --- panels -------------------------------------------------------------
@@ -634,6 +671,13 @@ export class GameUI {
       actions: [{ label: t('common.close') }] });
   }
 
+  openFleet() {
+    const dialog = modal({
+      title: t('fleet.title'), wide: true, body: fleetView(this, () => dialog.close()),
+      actions: [{ label: t('common.close') }],
+    });
+  }
+
   openFriends() {
     modal({ title: t('social.friends'), wide: true, body: friendsView(this),
       actions: [{ label: t('common.close') }] });
@@ -706,33 +750,6 @@ export class GameUI {
         onClose: () => { if (timer) clearInterval(timer); },
       });
     }).catch((error) => toast(t(error.code ?? 'error.generic'), 'bad'));
-  }
-
-  /** The screens that do not earn a permanent button of their own. */
-  openMore() {
-    const entry = (id, label, open) =>
-      h(`button.ghost#${id}`, { onClick: () => { dialog.close(); open(); } }, label);
-    const dialog = modal({
-      title: t('common.more'),
-      body: h('div.stack', null,
-        entry('more-ship', t('ship.title'), () => this.toggleShipPanel()),
-        this.character?.docked
-          ? entry('more-exchange', t('market.title'), () => this.openExchange())
-          : entry('more-combat', t('combat.title'), () => this.openCombat()),
-        this.character?.docked ? null
-          : entry('more-trade', t('trade.propose'), () => openTradePicker(this)),
-        entry('more-chat', t('chat.title'), () => this.chatPanel.classList.remove('is-collapsed')),
-        entry('more-friends', t('social.friends'), () => this.openFriends()),
-        entry('more-guild', t('guild.title'), () => this.openGuild()),
-        entry('more-company', t('company.title'), () => this.openCompany()),
-        entry('more-port', t('warehouse.title'), () => this.openPortServices()),
-        entry('more-album', t('explore.album'), () => this.openAlbum()),
-        entry('more-adreward', t('ads.watchForCoins'), () => this.openAdReward()),
-        entry('more-tutorial', t('tutorial.title'), () => this.tutorial.resume()),
-        entry('more-code', t('code.title'), () => this.openCodeDialog()),
-        entry('more-settings', t('menu.settings'), () => this.openSettings())),
-      actions: [{ label: t('common.close') }],
-    });
   }
 
   /** Re-read the character from the server; the panels call this after a change. */

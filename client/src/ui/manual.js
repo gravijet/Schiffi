@@ -8,8 +8,15 @@
 import { h } from './dom.js';
 import { t } from '../state/i18n.js';
 
-/** Section keys map onto locale keys that already exist for the UI. */
-const SECTIONS = [
+/**
+ * Section keys map onto locale keys that already exist for the UI.
+ *
+ * Exported so `docs.js` (the public, site-level documentation) can lay the
+ * very same content out as navigable pages instead of a stacked scroll of
+ * cards - one source of truth, so the in-game quick reference and the public
+ * docs can never drift apart.
+ */
+export const SECTIONS = [
   {
     title: 'mode.title',
     lines: ['mode.traderDesc', 'mode.explorerDesc'],
@@ -19,6 +26,7 @@ const SECTIONS = [
     lines: ['settings.keyboard', 'settings.gamepad', 'settings.touch'],
     extra: [
       { term: '← ↑ → ↓ / W A S D', detail: 'hud.heading' },
+      { term: '🖱️ / 👆', detail: 'hud.clickToSail' },
       { term: 'Q / E', detail: 'hud.map' },
       { term: 'Enter', detail: 'chat.send' },
       { term: 'M', detail: 'hud.map' },
@@ -44,6 +52,10 @@ const SECTIONS = [
   {
     title: 'explore.title',
     lines: ['explore.undiscovered', 'explore.firstDiscovery', 'explore.nameIsland', 'cartography.title'],
+  },
+  {
+    title: 'company.title',
+    lines: ['fleet.hint', 'company.routes', 'company.outposts', 'company.createRoute', 'company.buildOutpost'],
   },
   {
     title: 'pvp.protected',

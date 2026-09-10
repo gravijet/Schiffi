@@ -273,12 +273,17 @@ async function startGame(character) {
     // The gameplay screens change coins, cargo and crew; they ask for a
     // re-read rather than patching their own idea of the character.
     onRefresh: () => refreshCharacter(),
+    // A route created or deleted from the Company panel should show up on
+    // the map immediately, not wait for the next 12s poll.
+    refreshRoutes: () => refreshRoutes(),
   });
   state.game.character = state.character;
   state.game.world = state.world;
   state.game.mount(app);
   state.game.renderShipPanel();
   state.game.refreshPort();
+  refreshRoutes();
+  state.routesInterval = setInterval(refreshRoutes, 12000);
 
   state.input = new InputManager({
     settings, position: () => socket.selfPosition(), terrain: state.terrain,
@@ -300,6 +305,7 @@ async function startGame(character) {
 function stopGame() {
   state.running = false;
   socket.close();
+  clearInterval(state.routesInterval);
   state.game?.unmount();
   state.input?.destroy();
   state.renderer?.destroy();
@@ -307,6 +313,15 @@ function stopGame() {
   state.game = null;
   state.renderer = null;
   state.input = null;
+}
+
+/** Own company's trade routes - economy state, not a live entity feed, so a slow REST poll is the right layer. */
+async function refreshRoutes() {
+  if (!state.character) return;
+  try {
+    const { routes } = await api.routes(state.character.id);
+    state.renderer?.setRoutes(routes);
+  } catch { /* keep the last known set; the next poll tries again */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -336,7 +351,10 @@ function wireSocket() {
     const graphics = settings.effective();
     const self = socket.self;
     if (!self) return;
-    state.renderer.self = { ...socket.selfPosition(), v: self.v };
+    state.renderer.self = {
+      ...socket.selfPosition(), v: self.v, name: state.character?.ship?.name || t('hud.you'),
+      classKey: state.character?.ship?.classKey,
+    };
     state.renderer.selfStormSeverity = self.storm ? 0.7 : 0;
     state.renderer.wind = socket.wind;
     state.renderer.daylight = socket.light;
@@ -601,10 +619,27 @@ function drawMinimap() {
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(state.minimapBitmap, 0, 0, canvas.width, canvas.height);
 
-  // Viewport rectangle and own position.
-  const bounds = state.renderer.viewBounds();
   const scaleX = canvas.width / (CELLS_X * CELL_SIZE);
   const scaleY = canvas.height / (CELLS_Y * CELL_SIZE);
+
+  // Ports, so the minimap reads as a real overview rather than terrain alone.
+  // Any port that is a route's next arrival is picked out in the route colour.
+  if (state.world?.ports) {
+    const nextTargets = new Set((state.renderer.routes ?? []).map((route) => {
+      const waypoints = route.waypoints ?? [];
+      if (waypoints.length < 2) return null;
+      const legIndex = Number(route.legIndex) || 0;
+      return waypoints[(legIndex + 1) % waypoints.length];
+    }).filter(Boolean));
+
+    for (const port of state.world.ports) {
+      ctx.fillStyle = nextTargets.has(port.id) ? '#d98a3c' : 'rgba(201, 162, 39, 0.5)';
+      ctx.fillRect(port.x * scaleX, port.y * scaleY, 1, 1);
+    }
+  }
+
+  // Viewport rectangle and own position.
+  const bounds = state.renderer.viewBounds();
   ctx.strokeStyle = 'rgba(240, 212, 120, 0.8)';
   ctx.lineWidth = 1;
   ctx.strokeRect(bounds.x0 * scaleX, bounds.y0 * scaleY, bounds.w * scaleX, bounds.h * scaleY);

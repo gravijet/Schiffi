@@ -780,3 +780,19 @@ test('closing a season freezes the standings that were live', async () => {
   const still = await world.seasonBoard(season.id, instance.id, 'wealth');
   assert.equal(still[0].score, frozen[0].score, 'the record moved with the live state');
 });
+
+test('an account may keep several save games in the same world, up to the configured limit', async () => {
+  const { createCharacter } = await import('../src/game/characters.js');
+  const config = (await import('../src/config.js')).default;
+
+  // The account already has one character from the top-level fixture; fill
+  // the rest of the limit with fresh ones in the very same world.
+  const extra = config.game.maxCharactersPerWorld - 1;
+  for (let i = 0; i < extra; i++) {
+    await createCharacter({ userId, worldId: instance.id, name: `Zweitkapitän${i}`, mode: 'trader' }, instance);
+  }
+
+  await assert.rejects(
+    createCharacter({ userId, worldId: instance.id, name: 'Einer zu viel', mode: 'trader' }, instance),
+    (error) => error.code === 'error.characterLimit');
+});

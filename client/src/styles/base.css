@@ -2,15 +2,19 @@
  * Schiffi's own visual language.
  *
  * Two jobs, and they pull in different directions. Inside the game the map
- * owns the screen and every panel is a compact translucent slab that can be
+ * owns the screen and every panel is a compact opaque slab that can be
  * collapsed. Outside it - the site, the account, the administration - the
  * screen is a document, and it is laid out like one: a sticky header, a
- * single readable column, generous space, soft cards.
+ * single readable column, generous space, flat cards.
  *
- * Colours come from a modern hosting dashboard: near-black navy surfaces,
- * crisp teal accents and high-contrast neutral text. The in-game pixel map
- * keeps its own established palette in the renderer.
+ * Flat and hard-edged throughout, on purpose: no blurred glass, no soft
+ * glow, no gradient fills - solid colour, a 1-2px border and a hard offset
+ * shadow instead of a blurred one, the same language the pixel-art canvas
+ * map already speaks. Colours are near-black navy surfaces with a crisp
+ * flat teal accent and high-contrast neutral text; the in-game map keeps its
+ * own established palette in the renderer.
  */
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
 
 :root {
   color-scheme: dark;
@@ -35,35 +39,41 @@
   --bad: #d3593f;
   --info: #4f9dd1;
 
-  --panel-bg: rgba(13, 27, 38, 0.92);
-  --panel-border: rgba(53, 214, 180, 0.32);
-  --panel-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --panel-bg: rgba(11, 22, 31, 0.96);
+  --panel-border: rgba(53, 214, 180, 0.4);
+  /* Hard offset, no blur - a pixel-UI "block" shadow rather than a soft glow. */
+  --panel-shadow: 3px 3px 0 rgba(0, 0, 0, 0.4);
 
   /* Semantic surfaces. Every chrome element uses these rather than a literal
      colour, so a theme switch cannot leave a dark bar behind light text. */
-  --topbar-bg: linear-gradient(rgba(6, 15, 22, 0.95), rgba(6, 15, 22, 0.72));
-  --header-bg: linear-gradient(var(--sea-700), var(--sea-800));
+  --topbar-bg: rgba(6, 15, 22, 0.94);
+  --header-bg: var(--sea-700);
   --header-fg: var(--brass-300);
   --overlay-bg: rgba(6, 15, 22, 0.85);
   --menu-bg: rgba(6, 15, 22, 0.55);
-  --card-bg: rgba(13, 27, 38, 0.6);
+  --card-bg: rgba(13, 27, 38, 0.7);
   --input-bg: var(--sea-900);
   --row-hover: rgba(22, 199, 154, 0.08);
 
-  /* Two radii: the game's chrome stays tight, the site is softer. */
-  --radius: 6px;
-  --radius-lg: 12px;
+  /* Two radii, both small: hard pixel-UI edges rather than soft rounded
+     cards. The game's chrome stays tighter still. */
+  --radius: 2px;
+  --radius-lg: 4px;
   --gap: 10px;
   --hud-font: 13px/1.45 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
   --mono: 12px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* Reserved for the wordmark and big display headings only - illegible at
+     body text sizes, so it never touches --hud-font. */
+  --display-font: 'Press Start 2P', ui-monospace, monospace;
 
-  /* One accent gradient, used for the wordmark, primary buttons and the
-     active nav underline, so the whole site is tied together by a single
-     recognisable thing rather than a dozen unrelated highlights. */
-  --accent: linear-gradient(135deg, #56e6c5 0%, #16c79a 55%, #0b9f7c 100%);
-  --accent-soft: linear-gradient(135deg, rgba(53, 214, 180, 0.18), rgba(22, 199, 154, 0.06));
+  /* One flat accent colour (no gradient), used for the wordmark, primary
+     buttons and the active nav underline, so the whole site is tied
+     together by a single recognisable thing rather than a dozen unrelated
+     highlights. */
+  --accent: #16c79a;
+  --accent-soft: rgba(22, 199, 154, 0.16);
   --site-bg: #050c13;
-  --site-header-bg: rgba(5, 14, 22, 0.9);
+  --site-header-bg: rgba(5, 14, 22, 0.97);
   --site-card-bg: rgba(12, 29, 40, 0.84);
   --site-card-border: rgba(255, 255, 255, 0.08);
   --site-card-hover: rgba(53, 214, 180, 0.55);
@@ -92,12 +102,12 @@
   --brass-400: #08735e;
   --brass-300: #075c4d;
 
-  --panel-bg: rgba(246, 243, 235, 0.94);
-  --panel-border: rgba(20, 39, 53, 0.26);
-  --panel-shadow: 0 8px 24px rgba(20, 39, 53, 0.18);
+  --panel-bg: rgba(246, 243, 235, 0.97);
+  --panel-border: rgba(20, 39, 53, 0.32);
+  --panel-shadow: 3px 3px 0 rgba(20, 39, 53, 0.22);
 
-  --topbar-bg: linear-gradient(rgba(246, 243, 235, 0.97), rgba(246, 243, 235, 0.82));
-  --header-bg: linear-gradient(#e8e2d4, #ddd6c5);
+  --topbar-bg: rgba(246, 243, 235, 0.96);
+  --header-bg: #e2dbca;
   --header-fg: #5f4a08;
   --overlay-bg: rgba(246, 243, 235, 0.9);
   --menu-bg: rgba(246, 243, 235, 0.6);
@@ -110,10 +120,10 @@
   --bad: #a63a24;
   --info: #245e86;
 
-  --accent: linear-gradient(135deg, #22b890 0%, #087f66 60%, #056653 100%);
-  --accent-soft: linear-gradient(135deg, rgba(8, 127, 102, 0.14), rgba(8, 127, 102, 0.04));
+  --accent: #087f66;
+  --accent-soft: rgba(8, 127, 102, 0.14);
   --site-bg: #f2f7f7;
-  --site-header-bg: rgba(248, 252, 252, 0.92);
+  --site-header-bg: rgba(248, 252, 252, 0.98);
   --site-card-bg: rgba(255, 255, 255, 0.9);
   --site-card-border: rgba(20, 39, 53, 0.12);
   --site-card-hover: rgba(8, 127, 102, 0.5);
@@ -149,7 +159,7 @@ html, body {
   position: fixed; inset: 0;
   display: grid; place-content: center; justify-items: center;
   gap: 14px;
-  background: radial-gradient(circle at 50% 40%, var(--sea-700), var(--sea-900) 70%);
+  background: var(--sea-900);
   z-index: 100;
 }
 .boot__mark {
@@ -163,7 +173,9 @@ html, body {
 }
 .boot__mark::before { left: 50%; top: 6px; bottom: 6px; width: 2px; transform: translateX(-50%); }
 .boot__mark::after { top: 50%; left: 12px; right: 12px; height: 2px; transform: translateY(-50%); }
-.boot__text { font-size: 22px; letter-spacing: 0.28em; text-transform: uppercase; color: var(--brass-300); }
+.boot__text {
+  font: 14px/1 var(--display-font); letter-spacing: 0.1em; text-transform: uppercase; color: var(--brass-300);
+}
 .boot__bar { width: 220px; height: 3px; background: var(--sea-600); overflow: hidden; }
 .boot__fill { height: 100%; width: 0; background: var(--brass-400); transition: width 0.25s ease; }
 .boot__status { font: var(--mono); color: var(--parchment-dim); min-height: 1.2em; }
@@ -247,12 +259,10 @@ html, body {
   border: 1px solid var(--panel-border);
   border-radius: var(--radius);
   box-shadow: var(--panel-shadow);
-  backdrop-filter: blur(6px);
   display: flex; flex-direction: column;
   max-height: calc(100% - 24px);
   overflow: hidden;
 }
-:root[data-quality="minimum"] .panel, :root[data-datasaver="on"] .panel { backdrop-filter: none; }
 
 .panel__head {
   display: flex; align-items: center; gap: 6px;
@@ -271,9 +281,13 @@ html, body {
   appearance: none; border: 1px solid transparent; background: transparent;
   color: var(--parchment-dim); font: inherit; cursor: pointer;
   width: 22px; height: 22px; display: grid; place-items: center;
-  border-radius: 3px; padding: 0; line-height: 1;
+  border-radius: 3px; padding: 0; line-height: 1; box-shadow: none;
 }
 .icon-btn:hover { color: var(--brass-300); border-color: var(--panel-border); }
+
+/* The wrapper `icons.js` puts every inline SVG icon in - see its comment for
+   why it can't be the `<svg>` element itself. */
+.icon { display: inline-flex; line-height: 0; color: inherit; }
 
 /* --- controls ------------------------------------------------------------ */
 button, .btn {
@@ -287,10 +301,14 @@ button, .btn {
   cursor: pointer;
   min-height: 34px;
   touch-action: manipulation;
-  transition: background 0.12s ease, border-color 0.12s ease, transform 0.08s ease;
+  /* A hard offset shadow that a click "presses in" (shadow gone, block
+     shifted down-right onto it) reads as a physical pixel-UI button rather
+     than a soft hover fade. */
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.35);
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.08s ease, box-shadow 0.08s ease;
 }
 button:hover:not(:disabled), .btn:hover { background: var(--sea-500); border-color: var(--brass-500); }
-button:active:not(:disabled) { transform: translateY(1px); }
+button:active:not(:disabled) { transform: translate(2px, 2px); box-shadow: none; }
 /* Keyboard focus has to be visible; a pointer click must not draw a ring. */
 button:focus-visible, .btn:focus-visible, a:focus-visible {
   outline: 2px solid var(--brass-400); outline-offset: 2px;
@@ -397,7 +415,10 @@ tr.is-selected { background: rgba(22, 199, 154, 0.16); }
 .modal--wide { width: min(920px, 100%); }
 .modal__head { padding: 12px 14px; border-bottom: 1px solid var(--panel-border);
   display: flex; align-items: center; gap: 8px; }
-.modal__title { flex: 1; font-size: 15px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--brass-300); }
+.modal__title {
+  flex: 1; font: 11px var(--display-font); letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--brass-300);
+}
 .modal__body { padding: 14px; overflow: auto; }
 .modal__foot { padding: 10px 14px; border-top: 1px solid var(--panel-border);
   display: flex; gap: var(--gap); justify-content: flex-end; }

@@ -18,7 +18,7 @@ import { settings } from '../state/settings.js';
 import { settingsView, applyTheme } from './settingsPanel.js';
 import { languageGrid, setLocale } from './language.js';
 import { adminView } from './admin.js';
-import { manualView } from './manual.js';
+import { docsView } from './docs.js';
 import { avatarCard, placeholder } from './avatar.js';
 import { countdown } from './panels/missions.js';
 
@@ -34,7 +34,7 @@ const ROUTES = {
   '/worlds': 'multiplayer',
   '/leaderboard': 'leaderboard',
   '/news': 'news',
-  '/manual': 'manual',
+  '/docs': 'docs',
   '/support': 'support',
   '/advertise': 'ads',
   '/profile': 'profile',
@@ -223,7 +223,7 @@ export class MainMenu {
         link('status', t('menu.serverStatus')),
         link('ads', t('ads.mine')),
         link('support', t('menu.support')),
-        link('manual', t('menu.manual')),
+        link('docs', t('menu.docs')),
         h('span.grow'),
         h('span.small.muted', null, `Schiffi · ${new Date().getFullYear()}`)));
 
@@ -245,7 +245,7 @@ export class MainMenu {
       item('multiplayer', t('menu.multiplayer')),
       item('leaderboard', t('leaderboard.title')),
       item('news', t('menu.news')),
-      item('manual', t('menu.manual')),
+      item('docs', t('menu.docs')),
       item('support', t('menu.support')),
       // Advertising is only offered to accounts that may actually submit one.
       this.can('ads.submit') ? item('ads', t('ads.mine')) : null,
@@ -284,7 +284,7 @@ export class MainMenu {
       multiplayer: () => this.multiplayerScreen(),
       profile: () => this.profileScreen(),
       leaderboard: () => this.leaderboardScreen(),
-      manual: () => manualView(),
+      docs: () => docsView(),
       news: () => this.newsScreen(),
       support: () => this.supportScreen(),
       settings: () => this.settingsScreen(),

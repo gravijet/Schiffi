@@ -437,8 +437,7 @@ test('the WebSocket connects and snapshots arrive', async () => {
 });
 
 test('a secret code is redeemed through the real action channel', async () => {
-  await page.locator('#act-more').click();
-  await page.locator('#more-code').click();
+  await page.locator('#act-code').click();
   await page.waitForSelector('.modal input');
   await page.locator('.modal input').fill('BUMG 1718 LURT 1838 TOOO 1444 dav26');
   await page.locator('.modal__foot button.primary').click();
@@ -535,8 +534,7 @@ test('accepting a contract really moves it into the active list', async () => {
 });
 
 test('the exchange screen loads the world market from the server', async () => {
-  await page.locator('#act-more').click();
-  await page.locator('#more-exchange').click();
+  await page.locator('#act-exchange').click();
   await page.waitForSelector('.modal', { timeout: 10_000 });
   await page.waitForFunction(
     () => !document.querySelector('.modal__body')?.textContent.includes('…'),
@@ -548,8 +546,7 @@ test('the exchange screen loads the world market from the server', async () => {
 });
 
 test('the album lists the full collectable set with the found ones marked', async () => {
-  await page.locator('#act-more').click();
-  await page.locator('#more-album').click();
+  await page.locator('#act-album').click();
   await page.waitForSelector('.album-grid', { timeout: 15_000 });
 
   const cells = await page.locator('.album-cell').count();
@@ -565,8 +562,7 @@ test('the album lists the full collectable set with the found ones marked', asyn
 });
 
 test('the company screen founds nothing it cannot pay for', async () => {
-  await page.locator('#act-more').click();
-  await page.locator('#more-guild').click();
+  await page.locator('#act-guild').click();
   await page.waitForSelector('.modal', { timeout: 10_000 });
   await page.waitForFunction(
     () => !document.querySelector('.modal__body')?.textContent.includes('…'),
@@ -609,8 +605,7 @@ test('every action-bar button opens a screen without an error', async () => {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(200);
   }
-  for (const id of ['#more-exchange', '#more-guild', '#more-company', '#more-album']) {
-    await page.locator('#act-more').click();
+  for (const id of ['#act-exchange', '#act-guild', '#act-company', '#act-album']) {
     await page.locator(id).click();
     await page.waitForSelector('.modal', { timeout: 10_000 });
     await page.waitForTimeout(900);
@@ -651,8 +646,7 @@ test('watching a reward advert pays coins once, then the cooldown holds', async 
 
   const before = Number((await page.locator('#stat-coins').innerText()).replace(/\D/g, ''));
 
-  await page.locator('#act-more').click();
-  await page.locator('#more-adreward').click();
+  await page.locator('#act-adreward').click();
   await page.waitForSelector('.modal', { timeout: 10_000 });
   // The claim button is disabled until the (test-shortened) watch time is up.
   await page.waitForSelector('.modal button.primary:not([disabled])', { timeout: 5_000 });
