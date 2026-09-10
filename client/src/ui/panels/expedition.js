@@ -56,11 +56,15 @@ export function openExpedition(ctx, report) {
       const until = cooldowns.get(activity) ?? 0;
       const left = countdown(until - Date.now());
       const cost = ACTIVITY_COST[activity];
+      // Keep the name on the button while it counts down: four buttons all
+      // reading "available again in 5 min" say nothing about which is which.
       activityRow.append(h('button.ghost', {
         disabled: Boolean(left),
-        title: cost ? `${cost.minutes} min` : undefined,
+        title: left ? t('explore.cooldown', { time: left }) : (cost ? `${cost.minutes} min` : undefined),
         onClick: () => runActivity(activity),
-      }, left ? t('explore.cooldown', { time: left }) : t(`activity.${activity}`)));
+      },
+      h('span', null, t(`activity.${activity}`)),
+      left ? h('span.small.muted', null, ` · ${left}`) : null));
     }
   };
 
@@ -87,7 +91,7 @@ export function openExpedition(ctx, report) {
 
   function activityResult(activity, result) {
     const lines = [];
-    if (result.sightings) {
+    if (result.sightings?.length) {
       lines.push(h('div.small.muted', null, t('explore.sightings')));
       for (const sighting of result.sightings) {
         lines.push(h('div.row.row--between', null,

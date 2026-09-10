@@ -292,6 +292,12 @@ function wireSocket() {
       case 'sinking':
         toast(t('ship.sinking'), 'bad', 9000);
         break;
+      case 'tradeProposed':
+      case 'tradeUpdated':
+      case 'tradeSettled':
+      case 'tradeCancelled':
+        state.game.handleTradeEvent(message);
+        break;
       case 'playerJoined':
       case 'playerLeft':
         state.game.systemMessage(`${message.name} · ${message.online}`);
@@ -434,6 +440,7 @@ function loop(now) {
 
   drawMinimap();
   state.game.updateAshoreButton();
+  state.game.updateTradeButton();
   state.game.updatePerf();
 
   // Tell the server what we can see, so it only sends that.

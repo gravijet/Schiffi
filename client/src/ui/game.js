@@ -23,6 +23,7 @@ import { exchangeView } from './panels/exchange.js';
 import { companyView } from './panels/company.js';
 import { albumView } from './panels/album.js';
 import { Tutorial } from './panels/tutorial.js';
+import { openTradePicker, partnersInHail, onTradeEvent } from './panels/playerTrade.js';
 
 export class GameUI {
   constructor({ socket, renderer, onLeave, onRefresh }) {
@@ -108,6 +109,21 @@ export class GameUI {
    * Called from the render loop, so it has to be cheap and must not touch the
    * DOM unless something actually changed.
    */
+  /** A trade needs somebody to trade with; grey the button out until there is. */
+  updateTradeButton() {
+    const button = this.actionbar.querySelector('#act-trade');
+    if (!button) return;
+    const available = partnersInHail(this).length > 0;
+    if (button.disabled === !available) return;
+    button.disabled = !available;
+    button.title = available ? '' : t('trade.nobodyNear');
+  }
+
+  /** Trade events pushed by the server, forwarded to the open trade window. */
+  handleTradeEvent(message) {
+    onTradeEvent(this, message);
+  }
+
   updateAshoreButton() {
     const button = this.actionbar.querySelector('#act-explore');
     if (!button) return;
@@ -173,6 +189,7 @@ export class GameUI {
       // berth. Showing the rest would be a lie.
       docked ? null : h('button#act-explore', { onClick: () => goAshore(this) }, t('explore.expedition')),
       docked ? null : h('button#act-combat', { onClick: () => this.openCombat() }, t('combat.title')),
+      docked ? null : h('button#act-trade', { onClick: () => openTradePicker(this) }, t('trade.propose')),
       h('button#act-missions', { onClick: () => this.openMissions() }, t('mission.title')),
       docked ? h('button#act-exchange', { onClick: () => this.openExchange() }, t('market.title')) : null,
       h('button#act-more', { onClick: () => this.openMore() }, t('common.more')),

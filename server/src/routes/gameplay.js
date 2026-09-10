@@ -11,6 +11,7 @@ import { album, pendingNames, moderateName } from '../game/exploration.js';
 import { listBounties } from '../game/combat.js';
 import { listFriends, guildFor, listGuilds, convoyFor } from '../game/social.js';
 import { listMarket, routesFor, outpostsFor, premiumFor } from '../game/market.js';
+import { offersFor } from '../game/exchange.js';
 import { achievementsFor, ACHIEVEMENTS, PROFESSIONS, xpForLevel, levelForXp } from '../game/progression.js';
 import { WILDLIFE, FINDINGS, ACTIVITIES } from '@schiffi/shared/data/discoveries.js';
 import { TUTORIAL_STEPS, tutorialProgress } from '@schiffi/shared/data/tutorial.js';
@@ -126,6 +127,11 @@ export function registerGameplayRoutes(router, { gateway }) {
     goodId: ctx.query.goodId ? Number(ctx.query.goodId) : null,
     limit: Number(ctx.query.limit) || 60,
   }));
+
+  router.get('/api/characters/:id/trades', async (ctx) => {
+    await assertOwnership(ctx, ctx.params.id);
+    return { offers: await offersFor(ctx.params.id) };
+  });
 
   router.get('/api/worlds/:worldId/bounties', async (ctx) => ({
     bounties: await listBounties(ctx.params.worldId),

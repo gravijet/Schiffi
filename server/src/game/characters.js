@@ -242,7 +242,13 @@ export async function addCargo(tx, shipId, goodId, qty, unitCost, freshness = 1)
   });
 }
 
-/** Remove goods, oldest (least fresh) lot first. Returns the quantity removed. */
+/**
+ * Remove goods, oldest (least fresh) lot first.
+ *
+ * Reports the average freshness of what was taken as well as the quantity: a
+ * lot that changes hands has to arrive as worn as it left, or player trade
+ * would launder spoilage away.
+ */
 export async function removeCargo(tx, shipId, goodId, qty) {
   const lots = await tx.all(
     'SELECT * FROM cargo WHERE ship_id = ? AND good_id = ? ORDER BY freshness ASC, id ASC',
@@ -250,11 +256,13 @@ export async function removeCargo(tx, shipId, goodId, qty) {
   let remaining = qty;
   let removed = 0;
   let costBasis = 0;
+  let freshnessSum = 0;
 
   for (const lot of lots) {
     if (remaining <= 0) break;
     const take = Math.min(remaining, Number(lot.qty));
     costBasis += take * Number(lot.avg_cost);
+    freshnessSum += take * Number(lot.freshness);
     if (take >= Number(lot.qty)) {
       await tx.run('DELETE FROM cargo WHERE id = ?', [lot.id]);
     } else {
@@ -263,7 +271,7 @@ export async function removeCargo(tx, shipId, goodId, qty) {
     remaining -= take;
     removed += take;
   }
-  return { removed, costBasis };
+  return { removed, costBasis, freshness: removed > 0 ? freshnessSum / removed : 1 };
 }
 
 // --- fog of war ------------------------------------------------------------

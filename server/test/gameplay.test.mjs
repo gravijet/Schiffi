@@ -455,3 +455,151 @@ test('an automated trade route buys its ship and then runs on its own', async ()
   const row = await db.get('SELECT runs, leg_index FROM trade_routes WHERE id = ?', [route.routeId]);
   assert.equal(Number(row.runs), 1);
 });
+
+// --- trading with another captain -------------------------------------------
+
+/** A second live player, so a trade has two sides. */
+async function secondCaptain(name = 'Gegenpart') {
+  const auth = await import('../src/services/auth.js');
+  const { createCharacter, loadCharacter } = await import('../src/game/characters.js');
+  const { effectiveStats } = await import('@schiffi/shared/data/ships.js');
+
+  const registered = await auth.register({
+    email: `${name.toLowerCase()}@example.org`, username: name,
+    password: 'Treibholz-Anker-77', locale: 'de', ip: '127.0.0.1',
+  });
+  const id = await createCharacter(
+    { userId: registered.userId, worldId: instance.id, name, mode: 'trader' }, instance);
+  const character = await loadCharacter(id);
+  const stats = effectiveStats(character.ship.classKey, character.ship.upgrades, {});
+  instance.players.set(`p${id}`, {
+    netId: `p${id}`, kind: 1, characterId: String(id), userId: String(registered.userId),
+    displayName: name, x: character.x, y: character.y, heading: 0,
+    vx: 0, vy: 0, speed: 0, hull: character.ship.hull, sail: character.ship.sail,
+    maxHull: stats.hull, shipId: character.ship.id, stats, docked: false,
+    input: { x: 0, y: 0 }, combatBonus: 1, protected: false, cargoWeight: 0, crewFactor: 1,
+  });
+  return { characterId: id, userId: registered.userId, shipId: character.ship.id };
+}
+
+test('a player trade settles both halves or neither', async () => {
+  const exchange = await import('../src/game/exchange.js');
+  const { addCargo } = await import('../src/game/characters.js');
+  const { allGoods } = await import('@schiffi/shared/data/goods.js');
+
+  const other = await secondCaptain('Gegenpart');
+  // Side by side, at sea, so both are within hail.
+  const me = instance.players.get(`p${characterId}`);
+  const them = instance.players.get(`p${other.characterId}`);
+  them.x = me.x + 10;
+  them.y = me.y;
+  await db.run('UPDATE characters SET docked = 0 WHERE id IN (?, ?)', [characterId, other.characterId]);
+
+  const good = allGoods().find((entry) => entry.vol === 1 && !entry.perish);
+  const myShip = await db.get('SELECT active_ship_id AS id FROM characters WHERE id = ?', [characterId]);
+  await db.tx(async (tx) => { await addCargo(tx, myShip.id, good.id, 3, good.price, 0.6); });
+  await db.run('UPDATE characters SET coins = 0 WHERE id = ?', [characterId]);
+  await db.run('UPDATE characters SET coins = 900 WHERE id = ?', [other.characterId]);
+
+  const offer = await exchange.propose({
+    instance, characterId, userId, payload: { targetId: `p${other.characterId}` },
+  });
+  assert.ok(offer.id);
+
+  // I put up three units; they put up 500 coins.
+  await exchange.setOffer({
+    instance, characterId, userId,
+    payload: { offerId: offer.id, goods: [{ goodId: good.id, qty: 3 }], coins: 0 },
+  });
+  await exchange.setOffer({
+    instance, characterId: other.characterId, userId: other.userId,
+    payload: { offerId: offer.id, goods: [], coins: 500 },
+  });
+
+  // One confirmation alone settles nothing.
+  const half = await exchange.confirm({
+    instance, characterId, userId, payload: { offerId: offer.id },
+  });
+  assert.equal(half.settled, false);
+  let myCoins = await db.get('SELECT coins FROM characters WHERE id = ?', [characterId]);
+  assert.equal(Number(myCoins.coins), 0, 'coins moved on a single confirmation');
+
+  const done = await exchange.confirm({
+    instance, characterId: other.characterId, userId: other.userId, payload: { offerId: offer.id },
+  });
+  assert.equal(done.settled, true);
+
+  myCoins = await db.get('SELECT coins FROM characters WHERE id = ?', [characterId]);
+  const theirCoins = await db.get('SELECT coins FROM characters WHERE id = ?', [other.characterId]);
+  assert.equal(Number(myCoins.coins), 500);
+  assert.equal(Number(theirCoins.coins), 400);
+
+  const mineLeft = await db.get('SELECT SUM(qty) AS n FROM cargo WHERE ship_id = ? AND good_id = ?',
+    [myShip.id, good.id]);
+  const theirs = await db.get('SELECT qty, freshness FROM cargo WHERE ship_id = ? AND good_id = ?',
+    [other.shipId, good.id]);
+  assert.equal(Number(mineLeft?.n ?? 0), 0, 'the goods did not leave my hold');
+  assert.equal(Number(theirs.qty), 3, 'the goods did not arrive');
+  // Worn goods stay worn: a trade must not launder spoilage away.
+  assert.ok(Math.abs(Number(theirs.freshness) - 0.6) < 0.03,
+    `freshness was reset to ${theirs.freshness}`);
+});
+
+test('an offer that cannot be paid for moves nothing at all', async () => {
+  const exchange = await import('../src/game/exchange.js');
+  const { addCargo } = await import('../src/game/characters.js');
+  const { allGoods } = await import('@schiffi/shared/data/goods.js');
+
+  const other = await secondCaptain('Klamm');
+  const me = instance.players.get(`p${characterId}`);
+  const them = instance.players.get(`p${other.characterId}`);
+  them.x = me.x + 10;
+  them.y = me.y;
+  await db.run('UPDATE characters SET docked = 0 WHERE id IN (?, ?)', [characterId, other.characterId]);
+
+  const good = allGoods().find((entry) => entry.vol === 1 && !entry.perish);
+  const myShip = await db.get('SELECT active_ship_id AS id FROM characters WHERE id = ?', [characterId]);
+  await db.tx(async (tx) => { await addCargo(tx, myShip.id, good.id, 2, good.price, 1); });
+  await db.run('UPDATE characters SET coins = 100 WHERE id = ?', [other.characterId]);
+
+  const offer = await exchange.propose({
+    instance, characterId, userId, payload: { targetId: `p${other.characterId}` },
+  });
+  await exchange.setOffer({
+    instance, characterId, userId,
+    payload: { offerId: offer.id, goods: [{ goodId: good.id, qty: 2 }], coins: 0 },
+  });
+  await exchange.setOffer({
+    instance, characterId: other.characterId, userId: other.userId,
+    payload: { offerId: offer.id, goods: [], coins: 100 },
+  });
+  await exchange.confirm({ instance, characterId, userId, payload: { offerId: offer.id } });
+
+  // Their purse empties between confirming and settling.
+  await db.run('UPDATE characters SET coins = 0 WHERE id = ?', [other.characterId]);
+  const before = await db.get('SELECT SUM(qty) AS n FROM cargo WHERE ship_id = ? AND good_id = ?',
+    [myShip.id, good.id]);
+
+  await assert.rejects(() => exchange.confirm({
+    instance, characterId: other.characterId, userId: other.userId, payload: { offerId: offer.id },
+  }), /notEnoughCoins/);
+
+  const after = await db.get('SELECT SUM(qty) AS n FROM cargo WHERE ship_id = ? AND good_id = ?',
+    [myShip.id, good.id]);
+  const theirs = await db.get('SELECT SUM(qty) AS n FROM cargo WHERE ship_id = ? AND good_id = ?',
+    [other.shipId, good.id]);
+  assert.equal(Number(after?.n ?? 0), Number(before?.n ?? 0), 'goods left the hold anyway');
+  assert.equal(Number(theirs?.n ?? 0), 0, 'goods arrived without being paid for');
+});
+
+test('a trade with somebody out of hail is refused', async () => {
+  const exchange = await import('../src/game/exchange.js');
+  const other = await secondCaptain('Weitweg');
+  const me = instance.players.get(`p${characterId}`);
+  instance.players.get(`p${other.characterId}`).x = me.x + 100_000;
+
+  await assert.rejects(() => exchange.propose({
+    instance, characterId, userId, payload: { targetId: `p${other.characterId}` },
+  }), /tooFar/);
+});
+
