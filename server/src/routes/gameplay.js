@@ -12,6 +12,10 @@ import { listBounties } from '../game/combat.js';
 import { listFriends, guildFor, listGuilds, convoyFor } from '../game/social.js';
 import { listMarket, routesFor, outpostsFor, premiumFor } from '../game/market.js';
 import { offersFor } from '../game/exchange.js';
+import {
+  warehousesFor, rumoursFor, chartsFor, relationsFor,
+  currentSeason, listSeasons, seasonBoard, treasureOn,
+} from '../game/world.js';
 import { achievementsFor, ACHIEVEMENTS, PROFESSIONS, xpForLevel, levelForXp } from '../game/progression.js';
 import { WILDLIFE, FINDINGS, ACTIVITIES } from '@schiffi/shared/data/discoveries.js';
 import { TUTORIAL_STEPS, tutorialProgress } from '@schiffi/shared/data/tutorial.js';
@@ -121,6 +125,45 @@ export function registerGameplayRoutes(router, { gateway }) {
     const instance = getLoadedWorld(row.world_id);
     return { convoy: await convoyFor(ctx.params.id, instance) };
   });
+
+  // --- warehouses, rumours, charts and hoards -------------------------------
+
+  router.get('/api/characters/:id/warehouses', async (ctx) => {
+    await assertOwnership(ctx, ctx.params.id);
+    return { warehouses: await warehousesFor(ctx.params.id) };
+  });
+
+  router.get('/api/characters/:id/charts', async (ctx) => {
+    await assertOwnership(ctx, ctx.params.id);
+    return { charts: await chartsFor(ctx.params.id) };
+  });
+
+  router.get('/api/worlds/:worldId/ports/:portId/rumours', async (ctx) => {
+    const instance = getLoadedWorld(ctx.params.worldId) ?? await loadWorld(ctx.params.worldId);
+    return { rumours: await rumoursFor(instance, ctx.params.portId) };
+  });
+
+  router.get('/api/worlds/:worldId/islands/:islandId/treasure', async (ctx) => {
+    const instance = getLoadedWorld(ctx.params.worldId) ?? await loadWorld(ctx.params.worldId);
+    const characterId = ctx.query.characterId;
+    if (characterId) await assertOwnership(ctx, characterId);
+    return { treasure: await treasureOn(instance, Number(ctx.params.islandId), characterId ?? null) };
+  });
+
+  // --- politics and seasons -------------------------------------------------
+
+  router.get('/api/worlds/:worldId/relations', async (ctx) =>
+    relationsFor(ctx.params.worldId), { auth: false });
+
+  router.get('/api/seasons', async () => ({
+    current: await currentSeason(),
+    seasons: await listSeasons(),
+  }), { auth: false });
+
+  router.get('/api/seasons/:seasonId/leaderboard', async (ctx) => ({
+    board: ctx.query.board ?? 'wealth',
+    entries: await seasonBoard(ctx.params.seasonId, ctx.query.worldId, ctx.query.board ?? 'wealth'),
+  }), { auth: false });
 
   // --- markets -------------------------------------------------------------
   router.get('/api/worlds/:worldId/market', async (ctx) => listMarket(ctx.params.worldId, {

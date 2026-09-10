@@ -292,6 +292,14 @@ function wireSocket() {
       case 'sinking':
         toast(t('ship.sinking'), 'bad', 9000);
         break;
+      case 'warDeclared':
+      case 'peaceMade': {
+        const [a, b] = message.factions.map((key) => t(`faction.${key}`));
+        const text = t(message.kind === 'warDeclared' ? 'faction.warDeclared' : 'faction.peaceMade', { a, b });
+        state.game.systemMessage(text);
+        toast(text, message.kind === 'warDeclared' ? 'warn' : 'info');
+        break;
+      }
       case 'tradeProposed':
       case 'tradeUpdated':
       case 'tradeSettled':

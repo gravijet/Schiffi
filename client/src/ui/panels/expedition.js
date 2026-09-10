@@ -13,6 +13,7 @@ import { goodById } from '@schiffi/shared/data/goods.js';
 import { currentLocale } from '../../state/i18n.js';
 import { ACTIVITY_COST } from '@schiffi/shared/data/discoveries.js';
 import { LANDING_RANGE } from '@schiffi/shared/data/costs.js';
+import { digDialog } from './warehouse.js';
 
 const goodName = (goodId, fallback) => {
   const good = goodById(Number(goodId));
@@ -164,6 +165,16 @@ export function openExpedition(ctx, report) {
         survey.hasRuins ? h('div.small.good', null, t('explore.hasRuins')) : null,
         survey.hasTreasure ? h('div.small.good', null, t('explore.hasTreasure')) : null),
       nameBox,
+      // Only shown when the server says a hoard is really there and this
+      // captain holds its chart. Without the map there is nothing to see.
+      report.treasure
+        ? h('div.card', null,
+          h('div.card__title', null, t('treasure.title')),
+          h('p.small', null, t('treasure.here')),
+          h('button.primary', {
+            onClick: () => digDialog(ctx, report.treasure, () => { report.treasure = null; dialog.close(); }),
+          }, t('treasure.dig')))
+        : null,
       h('div.card__title', null, t('explore.activities')),
       activityRow,
       h('div.card__title', null, t('explore.yield')),

@@ -53,6 +53,7 @@ export const ACTIONS = [
   'guild.create', 'guild.join', 'guild.leave', 'guild.deposit', 'guild.withdraw',
   'convoy.create', 'convoy.join', 'convoy.leave', 'convoy.invite',
   'trade.propose', 'trade.set', 'trade.confirm', 'trade.cancel',
+  'warehouse.rent', 'warehouse.move', 'rumour.buy', 'treasure.dig',
   'friend.add', 'friend.remove', 'friend.accept',
   'code.redeem',
   'route.create', 'route.delete', 'outpost.build', 'outpost.building',

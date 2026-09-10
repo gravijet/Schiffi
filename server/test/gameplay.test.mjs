@@ -603,3 +603,173 @@ test('a trade with somebody out of hail is refused', async () => {
   }), /tooFar/);
 });
 
+// --- warehouses, rumours, treasure, politics and seasons ---------------------
+
+test('storage is rented, filled from the hold and emptied back into it', async () => {
+  const world = await import('../src/game/world.js');
+  const { addCargo } = await import('../src/game/characters.js');
+  const { allGoods } = await import('@schiffi/shared/data/goods.js');
+
+  // A port big enough to have a vault to let.
+  const port = instance.world.ports.find((entry) => entry.size >= 2);
+  assert.ok(port, 'this world has no port with a warehouse');
+  await moveTo(port.x, port.y, { docked: true, portId: port.id });
+  await grant(10_000);
+
+  const rented = await world.rentWarehouse({ instance, characterId, userId, payload: { capacity: 100 } });
+  assert.equal(rented.capacity, 100);
+  assert.ok(rented.rentPerDay > 0, 'a lease with no rent is not a lease');
+
+  const good = allGoods().find((entry) => entry.vol === 1 && !entry.perish);
+  const ship = await db.get('SELECT active_ship_id AS id FROM characters WHERE id = ?', [characterId]);
+  // Earlier tests left cargo aboard; this one is about what moves, not totals.
+  await db.run('DELETE FROM cargo WHERE ship_id = ?', [ship.id]);
+  await db.tx(async (tx) => { await addCargo(tx, ship.id, good.id, 4, good.price, 0.7); });
+
+  await world.storeGoods({
+    instance, characterId, userId, payload: { goodId: good.id, qty: 4, direction: 'store' },
+  });
+  let inHold = await db.get('SELECT SUM(qty) AS n FROM cargo WHERE ship_id = ? AND good_id = ?',
+    [ship.id, good.id]);
+  assert.equal(Number(inHold?.n ?? 0), 0, 'the goods never left the hold');
+
+  const stores = await world.warehousesFor(characterId);
+  const here = stores.find((store) => store.portId === port.id);
+  assert.equal(here.used, 4);
+  assert.ok(Math.abs(here.cargo[0].freshness - 0.7) < 0.03, 'freshness was not kept in store');
+
+  await world.storeGoods({
+    instance, characterId, userId, payload: { goodId: good.id, qty: 4, direction: 'load' },
+  });
+  inHold = await db.get('SELECT SUM(qty) AS n FROM cargo WHERE ship_id = ? AND good_id = ?',
+    [ship.id, good.id]);
+  assert.equal(Number(inHold?.n ?? 0), 4, 'the goods did not come back aboard');
+});
+
+test('unpaid warehouse rent is taken in goods, not forgiven', async () => {
+  const world = await import('../src/game/world.js');
+  const { addCargo } = await import('../src/game/characters.js');
+  const { allGoods } = await import('@schiffi/shared/data/goods.js');
+
+  const port = instance.world.ports.find((entry) => entry.size >= 2);
+  await moveTo(port.x, port.y, { docked: true, portId: port.id });
+
+  const good = allGoods().find((entry) => entry.vol === 1 && entry.price > 40 && !entry.perish);
+  const ship = await db.get('SELECT active_ship_id AS id FROM characters WHERE id = ?', [characterId]);
+  await db.tx(async (tx) => { await addCargo(tx, ship.id, good.id, 6, good.price, 1); });
+  await world.storeGoods({
+    instance, characterId, userId, payload: { goodId: good.id, qty: 6, direction: 'store' },
+  });
+
+  // An empty purse and rent falling due right now.
+  await db.run('UPDATE characters SET coins = 0 WHERE id = ?', [characterId]);
+  await db.run('UPDATE warehouses SET rent_due_at = ? WHERE character_id = ?',
+    [instance.gameTimeMs, characterId]);
+
+  const before = await db.get(
+    'SELECT SUM(qty) AS n FROM warehouse_cargo w JOIN warehouses h ON h.id = w.warehouse_id ' +
+    'WHERE h.character_id = ?', [characterId]);
+  await world.collectRent(instance);
+  const after = await db.get(
+    'SELECT SUM(qty) AS n FROM warehouse_cargo w JOIN warehouses h ON h.id = w.warehouse_id ' +
+    'WHERE h.character_id = ?', [characterId]);
+
+  assert.ok(Number(after?.n ?? 0) < Number(before?.n ?? 0),
+    'rent went unpaid and nothing was taken in its place');
+});
+
+test('a rumour costs coins and lands on the buyer\'s chart', async () => {
+  const world = await import('../src/game/world.js');
+  const port = instance.world.ports[0];
+  await moveTo(port.x, port.y, { docked: true, portId: port.id });
+  await grant(5000);
+
+  const rumours = await world.rumoursFor(instance, port.id);
+  assert.ok(rumours.length > 0, 'the tavern had nothing to say at all');
+  assert.ok(['sure', 'likely', 'doubtful'].includes(rumours[0].confidence));
+  // The buyer is told how sure the teller sounds, never the truth value.
+  assert.equal(rumours[0].truth, undefined, 'the rumour gave its own reliability away');
+
+  const before = await db.get('SELECT coins FROM characters WHERE id = ?', [characterId]);
+  const bought = await world.buyRumour({
+    instance, characterId, userId, payload: { rumourId: rumours[0].id },
+  });
+  const after = await db.get('SELECT coins FROM characters WHERE id = ?', [characterId]);
+  assert.equal(Number(after.coins), Number(before.coins) - bought.paid);
+
+  const charts = await world.chartsFor(characterId);
+  assert.ok(charts.some((chart) => chart.source === 'rumour'), 'nothing reached the chart');
+});
+
+test('a buried hoard is dug up once and only where it lies', async () => {
+  const world = await import('../src/game/world.js');
+  const treasure = await db.get(
+    'SELECT * FROM treasures WHERE world_id = ? AND found_at IS NULL LIMIT 1', [instance.id]);
+  assert.ok(treasure, 'no treasure was buried in this world');
+
+  // Nowhere near it.
+  await moveTo(Number(treasure.x) + 50_000, Number(treasure.y));
+  await assert.rejects(() => world.digTreasure({
+    instance, characterId, userId, payload: { treasureId: treasure.id },
+  }), /tooFar/);
+
+  // Standing on it, with an empty hold to put it in.
+  const ship = await db.get('SELECT active_ship_id AS id FROM characters WHERE id = ?', [characterId]);
+  await db.run('DELETE FROM cargo WHERE ship_id = ?', [ship.id]);
+  await moveTo(Number(treasure.x), Number(treasure.y));
+
+  const dug = await world.digTreasure({
+    instance, characterId, userId, payload: { treasureId: treasure.id },
+  });
+  assert.ok(dug.taken.length > 0, 'the hoard was empty');
+
+  // A hoard is lifted once.
+  await assert.rejects(() => world.digTreasure({
+    instance, characterId, userId, payload: { treasureId: treasure.id },
+  }), /notFound/);
+});
+
+test('factions drift, and a war is harder to end than to start', async () => {
+  const world = await import('../src/game/world.js');
+  const relations = await world.relationsFor(instance.id);
+  assert.ok(relations.relations.length > 0, 'no faction relations were seeded');
+
+  // Push one pair well past the declaration threshold and step politics.
+  const pair = relations.relations[0];
+  await db.run(
+    'UPDATE faction_relations SET relation = -0.95, at_war = 0 WHERE world_id = ? ' +
+    'AND faction_a = ? AND faction_b = ?', [instance.id, pair.a, pair.b]);
+  await world.stepPolitics(instance);
+  assert.equal(await world.atWar(instance.id, pair.a, pair.b), true, 'the war never started');
+
+  // Just back over the declaration line is not yet peace.
+  await db.run(
+    'UPDATE faction_relations SET relation = -0.7 WHERE world_id = ? AND faction_a = ? AND faction_b = ?',
+    [instance.id, pair.a, pair.b]);
+  await world.stepPolitics(instance);
+  assert.equal(await world.atWar(instance.id, pair.a, pair.b), true, 'the war ended too easily');
+});
+
+test('closing a season freezes the standings that were live', async () => {
+  const world = await import('../src/game/world.js');
+  const season = await world.currentSeason();
+  assert.ok(season.number >= 1);
+
+  const live = await world.rankFor(db, instance.id, 'wealth', 10);
+  assert.ok(live.length > 0, 'nobody is on the wealth board');
+
+  await world.closeSeason(season);
+  const frozen = await world.seasonBoard(season.id, instance.id, 'wealth');
+  assert.equal(frozen.length, live.length);
+  assert.equal(frozen[0].name, live[0].name);
+  assert.equal(frozen[0].score, Math.round(live[0].score));
+
+  // Closing the old one opens the next.
+  const next = await world.currentSeason();
+  assert.equal(next.number, season.number + 1);
+
+  // And the frozen board survives whatever happens to the live one.
+  await db.run('UPDATE characters SET coins = 0, bank_balance = 0 WHERE world_id = ?', [instance.id]);
+  const still = await world.seasonBoard(season.id, instance.id, 'wealth');
+  assert.equal(still[0].score, frozen[0].score, 'the record moved with the live state');
+});

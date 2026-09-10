@@ -22,6 +22,7 @@ import { addCargo, cargoUsage } from './characters.js';
 import { audit } from '../services/audit.js';
 import { awardXp } from './progression.js';
 import { LANDING_RANGE } from '@schiffi/shared/data/costs.js';
+import { treasureOn } from './world.js';
 
 // Shared with the client, which greys out the landing button at the same
 // distance rather than letting the player press it and be told no.
@@ -106,6 +107,8 @@ export async function land({ instance, characterId, userId }) {
       first: firstDiscovery,
     });
 
+    const hoard = await treasureOn(instance, island.id, characterId, tx);
+
     // Charting an island is worth experience whether or not you were first.
     const xp = firstDiscovery ? 400 : 25;
     await awardXp(tx, characterId, xp);
@@ -125,6 +128,9 @@ export async function land({ instance, characterId, userId }) {
       anchorage: { x: found.anchorage.x, y: found.anchorage.y },
       survey,
       activities: availableActivities(survey),
+      // A real buried hoard, if this island holds one that nobody has lifted.
+      // Without the map you are told nothing: that is what the map is for.
+      treasure: hoard?.hasMap ? { id: hoard.id } : null,
       xp,
     };
   });

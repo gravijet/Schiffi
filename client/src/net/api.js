@@ -144,6 +144,15 @@ export const api = {
   insurance: (characterId) => request(`/api/characters/${characterId}/insurance`),
   report: (data) => request('/api/reports', { method: 'POST', body: data }),
 
+  warehouses: (characterId) => request(`/api/characters/${characterId}/warehouses`),
+  charts: (characterId) => request(`/api/characters/${characterId}/charts`),
+  rumours: (worldId, portId) => request(`/api/worlds/${worldId}/ports/${portId}/rumours`),
+  relations: (worldId) => request(`/api/worlds/${worldId}/relations`),
+  seasons: () => request('/api/seasons'),
+  seasonBoard: (seasonId, worldId, board) =>
+    request(`/api/seasons/${seasonId}/leaderboard?worldId=${worldId}&board=${board}`),
+  playerTrades: (characterId) => request(`/api/characters/${characterId}/trades`),
+
   tutorial: (characterId) => request(`/api/characters/${characterId}/tutorial`),
   skipTutorial: (characterId) =>
     request(`/api/characters/${characterId}/tutorial/skip`, { method: 'POST' }),

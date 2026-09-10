@@ -24,6 +24,7 @@ import { companyView } from './panels/company.js';
 import { albumView } from './panels/album.js';
 import { Tutorial } from './panels/tutorial.js';
 import { openTradePicker, partnersInHail, onTradeEvent } from './panels/playerTrade.js';
+import { portServicesView } from './panels/warehouse.js';
 
 export class GameUI {
   constructor({ socket, renderer, onLeave, onRefresh }) {
@@ -637,6 +638,11 @@ export class GameUI {
       actions: [{ label: t('common.close') }] });
   }
 
+  openPortServices() {
+    modal({ title: t('port.title'), wide: true, body: portServicesView(this),
+      actions: [{ label: t('common.close') }] });
+  }
+
   openAlbum() {
     modal({ title: t('explore.album'), wide: true, body: albumView(this),
       actions: [{ label: t('common.close') }] });
@@ -651,6 +657,7 @@ export class GameUI {
       body: h('div.stack', null,
         entry('more-guild', t('guild.title'), () => this.openGuild()),
         entry('more-company', t('company.title'), () => this.openCompany()),
+        entry('more-port', t('warehouse.title'), () => this.openPortServices()),
         entry('more-album', t('explore.album'), () => this.openAlbum()),
         entry('more-tutorial', t('tutorial.title'), () => this.tutorial.resume()),
         entry('more-code', t('code.title'), () => this.openCodeDialog()),

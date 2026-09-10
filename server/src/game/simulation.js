@@ -28,6 +28,7 @@ import { persistWorldTick } from './worldManager.js';
 import { spawnNpcs, stepNpcs, reapNpcs } from './npc.js';
 import { sweepAuctions, stepRoutes } from './market.js';
 import { stepWeather } from './weather.js';
+import { collectRent, stepPolitics, seedTreasures, currentSeason } from './world.js';
 
 /** One real second is one game minute: a full day passes in 24 real minutes. */
 export const GAME_TIME_SCALE = 60;
@@ -63,6 +64,12 @@ export class Simulation {
     this.lastTime = performance.now();
     spawnNpcs(this.instance);
     this.refreshWrecks().catch((e) => console.error('[sim] wrecks', e.message));
+    // Hoards are part of the world, not of a session: plant them once, from
+    // the seed, so every player digs in the same places.
+    seedTreasures(this.instance)
+      .then((n) => { if (n) console.log(`[world] ${n} treasures buried in world ${this.instance.id}`); })
+      .catch((e) => console.error('[sim] treasures', e.message));
+    currentSeason().catch((e) => console.error('[sim] season', e.message));
     const loop = () => {
       if (!this.running) return;
       const now = performance.now();
@@ -303,6 +310,18 @@ export class Simulation {
     await this.persistPlayers();
 
     if (this.gameHour % 6 === 0) await recordPriceHistory(instance);
+    // Warehouse rent falls due once a game day; the powers fall out on their
+    // own schedule, which is slower and does not need a player present.
+    await collectRent(instance).catch((e) => console.error('[sim] rent', e.message));
+    if (this.gameHour % 12 === 0) {
+      const changes = await stepPolitics(instance).catch(() => []);
+      for (const change of changes) {
+        this.broadcast({
+          t: 'event', kind: change.atWar ? 'warDeclared' : 'peaceMade',
+          factions: [change.a, change.b],
+        });
+      }
+    }
     this.broadcast({ t: 'event', kind: 'time', gameTimeMs: instance.gameTimeMs, season: instance.season });
   }
 

@@ -13,6 +13,7 @@ import * as missions from '../game/missions.js';
 import * as social from '../game/social.js';
 import * as market from '../game/market.js';
 import * as exchange from '../game/exchange.js';
+import * as world from '../game/world.js';
 import { getDatabase } from '../db/index.js';
 import { loadCharacter, cargoUsage } from '../game/characters.js';
 import { effectiveStats } from '@schiffi/shared/data/ships.js';
@@ -72,6 +73,11 @@ const HANDLERS = {
   'trade.confirm': exchange.confirm,
   'trade.cancel': exchange.cancel,
 
+  'warehouse.rent': world.rentWarehouse,
+  'warehouse.move': world.storeGoods,
+  'rumour.buy': world.buyRumour,
+  'treasure.dig': world.digTreasure,
+
   'market.list': market.createListing,
   'market.buyout': market.buyout,
   'market.bid': market.bid,
@@ -102,6 +108,7 @@ const REFRESH_AFTER = new Set([
   'mission.accept', 'mission.complete', 'mission.abandon',
   'guild.create', 'guild.deposit', 'guild.withdraw',
   'trade.confirm',
+  'warehouse.rent', 'warehouse.move', 'rumour.buy', 'treasure.dig',
   'market.list', 'market.buy', 'market.buyout', 'market.bid', 'market.cancel',
   'insurance.buy', 'insurance.claim', 'route.create', 'route.delete',
   'outpost.build', 'outpost.building',
