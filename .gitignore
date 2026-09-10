@@ -147,3 +147,6 @@ vite.config.ts.timestamp-*
 data/
 dist/
 .DS_Store
+
+# Throwaway scripts used while developing (screenshot runs and the like)
+*.tmp.mjs
