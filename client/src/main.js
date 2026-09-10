@@ -27,9 +27,6 @@ import { api } from './net/api.js';
 import { CELL_SIZE, CELLS_X, CELLS_Y, FOG_X, FOG_Y, FOG_CELL_SIZE } from '@schiffi/shared/world/constants.js';
 
 const app = document.getElementById('app');
-const boot = document.getElementById('boot');
-const bootFill = document.getElementById('boot-fill');
-const bootStatus = document.getElementById('boot-status');
 
 const state = {
   menu: null,
@@ -42,27 +39,30 @@ const state = {
   running: false,
 };
 
+/**
+ * Looked up fresh on every call rather than cached once: `bootOverlay()`
+ * below tears its elements down and rebuilds them on demand, so a cached
+ * reference from an earlier overlay would silently stop updating anything
+ * visible the moment that overlay was replaced.
+ */
 function progress(fraction, message) {
-  if (bootFill) bootFill.style.width = `${Math.round(fraction * 100)}%`;
-  if (bootStatus && message) bootStatus.textContent = message;
+  const fill = document.getElementById('boot-fill');
+  const status = document.getElementById('boot-status');
+  if (fill) fill.style.width = `${Math.round(fraction * 100)}%`;
+  if (status && message) status.textContent = message;
 }
 
 async function main() {
-  progress(0.05, '…');
-
-  // Three independent things the first paint needs. They used to happen one
-  // after another, with the language picker *blocking* everything behind it -
-  // and because that dialog was drawn under the boot overlay, a first-time
-  // visitor saw the loading screen and nothing else, for ever. Nothing here
-  // blocks on a human any more, and the picker comes after the boot screen is
-  // gone, where it can actually be seen.
+  // Three independent things the first paint needs, fetched in parallel and
+  // awaited with nothing shown on screen for it - there used to be a generic
+  // spinner here, but the very first thing worth showing a visitor is the
+  // start gate itself, not a loading screen in front of it.
   const storedLocale = settings.get('locale');
   const [, session, promo] = await Promise.all([
     loadLocale(storedLocale ?? detectLocale()),
     api.me().then((r) => (r?.user ? r : null)).catch(() => null),
     fetchInterstitial(),
   ]);
-  progress(0.35, t('app.loading'));
 
   // 2. Appearance and quality. Auto-detect runs once and is then remembered.
   applyTheme(settings.get('theme'));
@@ -103,9 +103,6 @@ async function main() {
     state.menu.screen = MainMenu.routeFor(location.pathname);
     state.menu.render();
   });
-
-  progress(1, '');
-  boot?.remove();
 
   // 4. A deliberate first click before anything else. Its only functional
   // purpose is the advert below - a browser only ever allows a video to
