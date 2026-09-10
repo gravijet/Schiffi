@@ -210,6 +210,9 @@ export const api = {
   adminUser: (id) => request(`/api/admin/users/${id}`),
   adminUserSecurity: (id) => request(`/api/admin/users/${id}/security`),
   adminTriggerReset: (id) => request(`/api/admin/users/${id}/reset-password`, { method: 'POST' }),
+  // POST on purpose: a password must not travel in a URL that a proxy,
+  // a browser history entry or a server log would keep.
+  adminRevealPassword: (id) => request(`/api/admin/users/${id}/password/reveal`, { method: 'POST' }),
   adminRevokeSessions: (id) => request(`/api/admin/users/${id}/revoke-sessions`, { method: 'POST' }),
   adminBan: (id, days, reason) => request(`/api/admin/users/${id}/ban`, { method: 'POST', body: { days, reason } }),
   adminUnban: (id) => request(`/api/admin/users/${id}/unban`, { method: 'POST' }),

@@ -9,7 +9,57 @@ browser ──TLS──▶ Cloudflare (proxied) ──TLS──▶ nginx :443 �
                                                               └─▶ PostgreSQL
 ```
 
-Nothing but nginx is exposed: the game server binds `127.0.0.1:8080`.
+Nothing but nginx is exposed: the game server binds `127.0.0.1:8080`, and
+nginx answers port 443 only for connections that came from Cloudflare.
+
+## The edge is not optional
+
+An origin address is discoverable from historical DNS, so a proxied zone by
+itself protects nothing: anyone with the IP can connect straight to nginx and
+skip every WAF rule, the rate limit and the bot check. Two files close that:
+
+| File | Job |
+| --- | --- |
+| `/etc/nginx/snippets/cloudflare-real-ip.conf` | restore the visitor's address from `CF-Connecting-IP` |
+| `/etc/nginx/conf.d/cloudflare-origin-guard.conf` | `geo` map deciding whether a connection came from the edge |
+
+The vhost then answers `444` (close without a response) to anything else.
+
+The guard tests `$realip_remote_addr`, **not** `$remote_addr`. The real_ip
+module runs in the preaccess phase, so by the time an access rule is evaluated
+`$remote_addr` has already been rewritten to the visitor's own address - an
+allow-list of Cloudflare ranges checked against it would lock out every player
+and leave only the edge itself able to connect. `$realip_remote_addr` keeps the
+peer that actually opened the socket.
+
+Port 80 is deliberately left open to everyone: certbot's ACME challenge has to
+be reachable directly or the certificate stops renewing.
+
+Refresh the ranges after a Cloudflare announcement:
+
+```sh
+sudo scripts/refresh-cloudflare-ips.sh   # fetches, validates, tests, reloads
+```
+
+It refuses to install a list that came back short, and rolls back if
+`nginx -t` fails - an empty allow-list here is a total outage.
+
+### What is configured at the edge
+
+| Setting | Value |
+| --- | --- |
+| SSL mode | Full |
+| Always Use HTTPS | on |
+| Minimum TLS | 1.2 |
+| Managed WAF | Cloudflare Managed Free Ruleset, deployed |
+| Bot Fight Mode | on |
+| Rate limit | `/api/auth/login`, `/api/auth/register`, `/api/auth/password/reset` — 8 requests / 10 s per IP |
+| Custom rules | block common scanner paths; managed challenge on registration above threat score 14 |
+
+The Free plan caps a rate-limiting rule at a 10-second window and a 10-second
+block, so that rule slows a brute force down rather than stopping it. The
+server's own `login_attempts` throttle is what actually holds the line; the
+edge rule is there to keep the volume off the origin.
 
 ## Pieces
 
@@ -79,5 +129,10 @@ MX records.
   one, so switching the zone to strict would work - it is a zone-wide setting
   and also affects `ai.superdavid.eu`.
 - **The first account to register becomes the owner** (`ownerCount() === 0` in
-  `services/auth.js`). The database is empty, so register before announcing
-  the address.
+  `services/auth.js`). Further owners are granted from `/superadmin`.
+- **`PASSWORD_VAULT_KEY` is set on this host**, so the superadmin console can
+  display a stored password. See the *Passwords* section of the README for what
+  that costs. Accounts whose password predates the key report `notStored` and
+  stay unreadable until their next password change - Argon2id cannot be
+  reversed. Back this key up separately from the database, and never in the
+  same place: together they are every password on the server.

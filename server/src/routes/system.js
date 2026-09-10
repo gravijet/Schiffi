@@ -10,6 +10,7 @@ import { getDatabase } from '../db/index.js';
 import config from '../config.js';
 import { LOCALES } from '@schiffi/shared/i18n/index.js';
 import { GOODS_COUNT } from '@schiffi/shared/data/goods.js';
+import { vaultEnabled, vaultKeyId } from '../services/passwordVault.js';
 
 const startedAt = Date.now();
 
@@ -45,6 +46,11 @@ export function registerSystemRoutes(router, { gateway, simulations }) {
         external: memory.external,
       },
       database: getDatabase().dialect,
+      // Whether a stored password can be shown at all. Behind system.status,
+      // not on the public /api/status: an anonymous visitor has no business
+      // learning how this installation stores credentials.
+      passwordVaultEnabled: vaultEnabled(),
+      passwordVaultKeyId: vaultKeyId(),
       websocket: gateway.stats,
       worlds: loadedWorlds().map((w) => {
         const sim = simulations.get(String(w.id));

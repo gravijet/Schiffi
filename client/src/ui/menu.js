@@ -32,7 +32,43 @@ export class MainMenu {
   mount(parent) {
     parent.append(this.root);
     this.render();
+    this.loadBackdrop();
     return this;
+  }
+
+  /**
+   * Put the actual world behind the menu.
+   *
+   * The image is the server's portrait of the world this installation runs -
+   * one small PNG, cached immutably, decoded by the browser off the main
+   * thread. It is set as a custom property so the stylesheet owns how it is
+   * presented, and a failure here is silent by design: the menu already looks
+   * finished without it, and a player on a bad connection should not be shown
+   * an error about a background.
+   */
+  async loadBackdrop() {
+    if (this.backdropLoaded) return;
+    // Data saver means the player asked not to download decoration.
+    if (settings.get('dataSaver')) return;
+
+    try {
+      const { worlds } = await api.worlds();
+      const world = worlds?.[0];
+      if (!world) return;
+      const theme = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+      const url = `/api/worlds/${world.id}/portrait.png?theme=${theme}`;
+
+      // Decode before showing it: swapping the property while the PNG is still
+      // arriving makes the menu flash a half-painted map.
+      await new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = resolve;
+        image.onerror = reject;
+        image.src = url;
+      });
+      this.root.style.setProperty('--world-portrait', `url("${url}")`);
+      this.backdropLoaded = true;
+    } catch { /* no backdrop: the gradient stands on its own */ }
   }
 
   unmount() { this.root.remove(); }
@@ -53,6 +89,31 @@ export class MainMenu {
       || permissions.some((p) => p.startsWith('users.') || p.startsWith('roles.') || p.startsWith('world.'));
   }
 
+  /**
+   * A superadmin is an account holding the wildcard - the owner role, or any
+   * role an owner has given it. It is not a hard-coded name or id: roles are
+   * data here, so "who is superadmin" has to be a question about permissions.
+   */
+  get isSuperadmin() {
+    return (this.session?.permissions ?? []).includes('*');
+  }
+
+  /**
+   * Screens that have their own URL.
+   *
+   * Only /superadmin needs one: it is the address an operator types, and it
+   * has to survive a reload and a bookmark. Everything else stays a plain
+   * in-page screen, so no history entries pile up while browsing the menu.
+   */
+  static routeFor(pathname) {
+    return /^\/superadmin\/?$/i.test(pathname) ? 'superadmin' : null;
+  }
+
+  applyRoute() {
+    const screen = MainMenu.routeFor(location.pathname);
+    if (screen) this.screen = screen;
+  }
+
   render() {
     this.renderNav();
     this.renderMain();
@@ -61,7 +122,14 @@ export class MainMenu {
   renderNav() {
     clear(this.nav);
     const item = (key, label) => h(`button${this.screen === key ? '.is-active' : ''}`, {
-      onClick: () => { this.screen = key; this.render(); },
+      onClick: () => {
+        this.screen = key;
+        // Keep the address bar in step with the one screen that has a URL,
+        // so a reload or a bookmark lands where the operator expects.
+        const wanted = key === 'superadmin' ? '/superadmin' : '/';
+        if (location.pathname !== wanted) history.pushState({ screen: key }, '', wanted);
+        this.render();
+      },
     }, label);
 
     add(this.nav,
@@ -80,6 +148,9 @@ export class MainMenu {
       // The administration entry only exists for accounts that hold a
       // permission for it: an ordinary player never sees it.
       this.canAdminister ? item('admin', t('admin.title')) : null,
+      // The superadmin console is a separate entry, and a separate URL, so it
+      // is never something an operator lands on by accident.
+      this.isSuperadmin ? item('superadmin', t('superadmin.title')) : null,
       h('div.spacer'),
       this.session
         ? h('button', {
@@ -107,6 +178,7 @@ export class MainMenu {
       settings: () => this.settingsScreen(),
       server: () => this.serverScreen(),
       admin: () => adminView(this.session),
+      superadmin: () => this.superadminScreen(),
     }[this.screen];
     add(this.main, view ? view() : h('div'));
   }
@@ -126,20 +198,42 @@ export class MainMenu {
     }
 
     const list = h('div.stack');
+    // Filled in once the character list is known: with no captain it offers to
+    // start one immediately, with a captain it offers to sail on.
+    const lead = h('div.lead-action');
+
     root.append(
+      lead,
       h('div.card', null,
         h('div.card__title', null, t('menu.loadGame')),
         list),
       h('div.row', { style: { marginTop: '12px' } },
-        h('button.primary', { onClick: () => this.newGameDialog() }, t('menu.newGame'))),
+        h('button', { onClick: () => this.newGameDialog() }, t('menu.newGame'))),
     );
 
     api.characters().then(({ characters }) => {
       clear(list);
+      clear(lead);
+
       if (characters.length === 0) {
+        // Nothing between a new account and the sea but one button. The
+        // dialog is still there for anyone who wants to choose a name, a mode
+        // and a world - it is just no longer compulsory.
+        lead.append(
+          h('button.primary.btn-lead', { onClick: () => this.quickStart() }, t('menu.quickStart')),
+          h('p.small.muted', null, t('menu.quickStartHint')));
         list.append(h('p.muted', null, t('common.empty')));
         return;
       }
+
+      // One captain is the common case; sail on without making the player
+      // pick out of a list of one.
+      const recent = [...characters].sort((a, b) => b.lastSeenAt - a.lastSeenAt)[0];
+      lead.append(
+        h('button.primary.btn-lead', { onClick: () => this.onPlay?.(recent) },
+          `${t('menu.continue')} · ${recent.name}`),
+        h('p.small.muted', null,
+          `${recent.worldName} · ${t(`mode.${recent.mode}`)} · ${t('profile.level')} ${recent.level}`));
       for (const character of characters) {
         list.append(h('div.card.card--pick', {
           onClick: () => this.onPlay?.(character),
@@ -162,7 +256,29 @@ export class MainMenu {
     return root;
   }
 
-  async newGameDialog() {
+/**
+   * Start playing in one click.
+   *
+   * Picks the first open world and the trader mode, and names the captain
+   * after the account. Everything it chooses can be changed later in the game;
+   * what it removes is the three-screen gap between registering and seeing the
+   * sea, which is where every new player was being lost.
+   */
+  async quickStart() {
+    try {
+      const { worlds } = await api.worlds();
+      const world = worlds.find((w) => w.status === 'open');
+      if (!world) { toast(t('error.worldNotFound'), 'bad'); return; }
+
+      const base = (this.session?.user?.username ?? 'Kapitaen').slice(0, 24);
+      const created = await api.createCharacter({ worldId: world.id, name: base, mode: 'trader' });
+      this.onPlay?.(created.character);
+    } catch (error) {
+      toast(t(error.code ?? 'error.generic'), 'bad');
+    }
+  }
+
+    async newGameDialog() {
     const { worlds } = await api.worlds();
     const open = worlds.filter((w) => w.status === 'open');
     if (open.length === 0) {
@@ -172,7 +288,12 @@ export class MainMenu {
 
     let selectedWorld = open[0].id;
     let selectedMode = 'trader';
-    const nameInput = h('input', { placeholder: t('common.name'), maxLength: 24, autofocus: true });
+    // Pre-filled from the account name: a blank required field is the most
+    // common reason a player bounces off a character creation screen.
+    const nameInput = h('input', {
+      placeholder: t('common.name'), maxLength: 24, autofocus: true,
+      value: this.session?.user?.username ?? '',
+    });
 
     const worldCards = h('div.stack', null, ...open.map((world) =>
       h(`div.card.card--pick${world.id === selectedWorld ? '.is-active' : ''}`, {
@@ -695,6 +816,53 @@ export class MainMenu {
     return h('div', null,
       h('h2', null, t('settings.title')),
       settingsView({ onChange: () => this.onSettingsChange?.() }));
+  }
+
+  /**
+   * The superadmin console at /superadmin.
+   *
+   * It is not a second copy of the administration screen: it frames it. The
+   * header states what this account may do and what the installation's
+   * password policy actually is, because an operator standing in front of a
+   * "show password" button should be able to read what that button means
+   * without going to the source.
+   *
+   * The permission check here is cosmetic - every endpoint behind it checks
+   * again on the server, which is where the boundary really is.
+   */
+  superadminScreen() {
+    const root = h('div.superadmin');
+
+    if (!this.session) {
+      return h('div', null,
+        h('h2', null, t('superadmin.title')),
+        h('p.lede', null, t('superadmin.signInFirst')),
+        this.authCard());
+    }
+    if (!this.isSuperadmin) {
+      return h('div', null,
+        h('h2', null, t('superadmin.title')),
+        h('div.card', null, h('p.bad', null, t('superadmin.denied'))));
+    }
+
+    const vault = h('div.card');
+    api.adminSystem()
+      .then((info) => {
+        clear(vault);
+        const enabled = info.passwordVaultEnabled === true;
+        vault.append(
+          h('div.card__title', null, t('superadmin.vaultTitle')),
+          h('p.small', null, t(enabled ? 'superadmin.vaultOn' : 'superadmin.vaultOff')));
+      })
+      .catch(() => { clear(vault); vault.append(h('p.bad.small', null, t('app.offline'))); });
+
+    add(root,
+      h('div.superadmin__head', null,
+        h('h2', null, t('superadmin.title')),
+        h('p.lede', null, t('superadmin.lede', { user: this.session.user.username }))),
+      vault,
+      adminView(this.session));
+    return root;
   }
 
   serverScreen() {

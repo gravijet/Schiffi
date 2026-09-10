@@ -5,8 +5,15 @@
  *   - passwords are hashed with Argon2id and never stored, logged or returned
  *   - session tokens are stored as SHA-256 hashes, so a database dump does not
  *     hand anyone a working session
- *   - there is no code path anywhere that can turn a stored hash back into a
- *     password. An owner can *trigger a reset*; nobody can *read* a password.
+ *   - the hash itself is still one-way: nothing here turns password_hash back
+ *     into a password.
+ *
+ * On top of that, this installation is configured to keep a RECOVERABLE copy
+ * of the password in an encrypted vault (services/passwordVault.js), because
+ * the operator requires a "show password" function in the superadmin console.
+ * Logins are still checked against the Argon2id hash and only against it; the
+ * vault is a separate, separately keyed copy. See passwordVault.js for what
+ * that costs.
  */
 import { hash as argonHash, verify as argonVerify } from '@node-rs/argon2';
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
@@ -17,6 +24,7 @@ import { invalidateUser, ownerCount, grantOwner } from './rbac.js';
 import { sendMail } from '../mail/transport.js';
 import { verifyEmailTemplate, passwordResetTemplate, passwordChangedTemplate } from '../mail/templates.js';
 import { isValidLocale, DEFAULT_LOCALE } from '@schiffi/shared/i18n/index.js';
+import { seal as sealPassword, open as openPassword, vaultEnabled, vaultKeyId } from './passwordVault.js';
 
 const SESSION_BYTES = 32;
 const TOKEN_TTL = {
@@ -156,6 +164,9 @@ export async function register({ email, username, password, locale, ip }) {
     email: String(email).trim(), email_norm: emailNorm,
     username: String(username).trim(), username_norm: usernameNorm,
     password_hash: passwordHash, password_algo: 'argon2id',
+    password_vault: sealPassword(password),
+    password_vault_at: vaultEnabled() ? now : null,
+    password_vault_key_id: vaultKeyId(),
     locale: chosenLocale, theme: 'auto',
     settings: '{}', created_at: now, updated_at: now,
   });
@@ -381,8 +392,10 @@ export async function resetPassword({ token, newPassword, ip }) {
 
   const passwordHash = await hashPassword(newPassword);
   await db.run(
-    'UPDATE users SET password_hash = ?, password_algo = ?, force_password_reset = 0, updated_at = ? WHERE id = ?',
-    [passwordHash, 'argon2id', Date.now(), userId]);
+    'UPDATE users SET password_hash = ?, password_algo = ?, password_vault = ?, ' +
+    'password_vault_at = ?, password_vault_key_id = ?, force_password_reset = 0, updated_at = ? WHERE id = ?',
+    [passwordHash, 'argon2id', sealPassword(newPassword),
+      vaultEnabled() ? Date.now() : null, vaultKeyId(), Date.now(), userId]);
   await revokeAllSessions(userId, { userId, ip });
   await sendMail({ to: user.email, ...passwordChangedTemplate({ locale: user.locale, name: user.username }) });
   await audit({ userId, ip }, 'user.password_reset', 'user', String(userId), {});
@@ -400,8 +413,10 @@ export async function changePassword({ userId, currentPassword, newPassword, ip,
   if (weak) throw fail(400, weak, 'weak password');
 
   await db.run(
-    'UPDATE users SET password_hash = ?, force_password_reset = 0, updated_at = ? WHERE id = ?',
-    [await hashPassword(newPassword), Date.now(), userId]);
+    'UPDATE users SET password_hash = ?, password_vault = ?, password_vault_at = ?, ' +
+    'password_vault_key_id = ?, force_password_reset = 0, updated_at = ? WHERE id = ?',
+    [await hashPassword(newPassword), sealPassword(newPassword),
+      vaultEnabled() ? Date.now() : null, vaultKeyId(), Date.now(), userId]);
   await revokeAllSessions(userId, { userId, ip }, keepSessionId);
   await sendMail({ to: user.email, ...passwordChangedTemplate({ locale: user.locale, name: user.username }) });
   await audit({ userId, ip }, 'user.password_changed', 'user', String(userId), {});
@@ -495,7 +510,14 @@ export async function securityStatus(userId) {
     username: user.username,
     emailVerified: Boolean(user.email_verified_at),
     passwordAlgorithm: user.password_algo,
-    passwordReadable: false,       // stated explicitly: there is no such code path
+    // This build keeps a recoverable copy (services/passwordVault.js), so the
+    // field reports what is actually true for THIS account rather than a
+    // blanket promise. A password set before the vault key was configured is
+    // still unreadable, because Argon2id cannot be reversed.
+    passwordReadable: Boolean(user.password_vault) && vaultEnabled()
+      && user.password_vault_key_id === vaultKeyId(),
+    passwordVaultEnabled: vaultEnabled(),
+    passwordVaultAt: user.password_vault_at ? Number(user.password_vault_at) : null,
     forcePasswordReset: user.force_password_reset === 1,
     activeSessions: Number(sessions?.n ?? 0),
     failedLogins24h: Number(failures?.n ?? 0),
@@ -503,6 +525,37 @@ export async function securityStatus(userId) {
     bannedUntil: user.banned_until ? Number(user.banned_until) : null,
     createdAt: Number(user.created_at),
   };
+}
+
+/**
+ * Read a user's password back out of the vault.
+ *
+ * The caller must already have checked the permission; this function does the
+ * work and reports honestly why it cannot when it cannot. Auditing is the
+ * caller's job because only the caller knows the actor and the request IP.
+ *
+ * Returns { password, reason }: exactly one of the two is set.
+ */
+export async function revealPassword(userId) {
+  const db = getDatabase();
+  const user = await db.get('SELECT * FROM users WHERE id = ?', [userId]);
+  if (!user) throw fail(404, 'error.notFound');
+
+  if (!vaultEnabled()) {
+    return { password: null, reason: 'vaultDisabled' };
+  }
+  if (!user.password_vault) {
+    // Set before the vault existed, or cleared by an account deletion.
+    return { password: null, reason: 'notStored' };
+  }
+  if (user.password_vault_key_id !== vaultKeyId()) {
+    return { password: null, reason: 'keyRotated' };
+  }
+
+  const password = openPassword(user.password_vault);
+  if (password === null) return { password: null, reason: 'undecryptable' };
+
+  return { password, reason: null, storedAt: Number(user.password_vault_at ?? 0) };
 }
 
 export async function deleteAccount(userId, { password, actor }) {
@@ -518,7 +571,9 @@ export async function deleteAccount(userId, { password, actor }) {
     // records stay consistent while the personal data goes.
     await tx.run(
       'UPDATE users SET email = ?, email_norm = ?, username = ?, username_norm = ?, ' +
-      'password_hash = ?, avatar_path = NULL, settings = ?, deleted_at = ?, updated_at = ? WHERE id = ?',
+      'password_hash = ?, password_vault = NULL, password_vault_at = NULL, ' +
+      'password_vault_key_id = NULL, avatar_path = NULL, settings = ?, ' +
+      'deleted_at = ?, updated_at = ? WHERE id = ?',
       [`deleted+${userId}@invalid`, `deleted+${userId}@invalid`,
         `deleted_${userId}`, `deleted_${userId}`,
         `deleted:${randomBytes(16).toString('hex')}`, '{}', Date.now(), Date.now(), userId]);
@@ -536,7 +591,19 @@ export async function exportUserData(userId) {
   const user = await db.get('SELECT * FROM users WHERE id = ?', [userId]);
   if (!user) throw fail(404, 'error.notFound');
 
-  const { password_hash: _hash, ...safeUser } = user;
+  // An allow-list, not a blacklist.
+  //
+  // This used to strip password_hash and pass everything else through, which
+  // meant the day a password_vault column was added the export quietly started
+  // handing out the sealed record too. Naming what may leave is the only form
+  // of this that survives a schema change.
+  const EXPORTED_USER_COLUMNS = [
+    'id', 'email', 'username', 'locale', 'theme', 'avatar_path', 'settings',
+    'created_at', 'updated_at', 'last_login_at', 'email_verified_at',
+    'banned_until', 'ban_reason', 'deleted_at',
+  ];
+  const safeUser = Object.fromEntries(
+    EXPORTED_USER_COLUMNS.filter((column) => column in user).map((column) => [column, user[column]]));
   const characters = await db.all('SELECT * FROM characters WHERE user_id = ?', [userId]);
   const charIds = characters.map((c) => c.id);
   const inList = charIds.length ? charIds.map(() => '?').join(',') : 'NULL';
@@ -551,7 +618,9 @@ export async function exportUserData(userId) {
 
   return {
     exportedAt: new Date().toISOString(),
-    note: 'Password material is intentionally absent: it is stored only as an Argon2id hash and cannot be exported or read.',
+    note: 'No password material is included. The login hash is one-way, and the '
+      + 'recoverable copy this server keeps for the operator console is not exported '
+      + 'either - it would only put another copy of your password on your disk.',
     user: safeUser,
     characters, ships, achievements, tickets, chatMessages: chats, discoveries,
   };

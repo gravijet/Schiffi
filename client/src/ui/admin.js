@@ -5,8 +5,11 @@
  * control here calls a permission-gated endpoint - the UI hiding a button is
  * a convenience, not the security boundary.
  *
- * There is deliberately no way to view a password. The strongest action on the
- * security tab is "send a reset e-mail", and the panel says so in plain words.
+ * The security tab can display a stored password, because this installation is
+ * operated that way (see server/src/services/passwordVault.js). The control is
+ * gated on `users.password_reveal`, every use is written to the audit log, and
+ * the panel states plainly when a password cannot be shown - a password set
+ * before the vault key existed is gone for good, Argon2id being one-way.
  */
 import { h, add, clear, toast, modal, confirmDialog, tabs, debounce } from './dom.js';
 import { t, td } from '../state/i18n.js';
@@ -35,7 +38,7 @@ export function adminView(session) {
 
     add(root,
       h('h2', null, t('admin.title')),
-      h('p.lede', null, t('admin.passwordsNeverVisible')),
+      h('p.lede', null, t('admin.lede')),
       tabs(available, active, (key) => { active = key; render(); }),
       h('div', { style: { paddingTop: '12px' } },
         active === 'users' ? usersTab(can)
@@ -95,6 +98,57 @@ function usersTab(can) {
   return root;
 }
 
+/**
+ * "Show password".
+ *
+ * Deliberately a two-step control: the value is never rendered as a side
+ * effect of opening a user, only after a conscious click, and it hides itself
+ * again on close. The server audits the call regardless of what happens here -
+ * hiding it in the interface is a courtesy to whoever is standing behind the
+ * operator, not a security boundary.
+ */
+function revealControl(userId, status) {
+  const output = h('div');
+  const wrap = h('div', { style: { marginTop: '10px' } });
+
+  const button = h('button.danger', {
+    onClick: async () => {
+      button.disabled = true;
+      try {
+        const result = await api.adminRevealPassword(userId);
+        clear(output);
+        if (result.password === null) {
+          // Say which of the four reasons applies instead of "failed".
+          output.append(h('p.bad.small', null, t(`admin.reveal.${result.reason}`)));
+          button.disabled = false;
+          return;
+        }
+        output.append(
+          h('div.reveal', null,
+            h('code.reveal__value', null, result.password),
+            h('button.ghost.small', {
+              onClick: () => navigator.clipboard?.writeText(result.password)
+                .then(() => toast(t('common.copied'), 'good'))
+                .catch(() => toast(t('error.generic'), 'bad')),
+            }, t('common.copy')),
+            h('button.ghost.small', {
+              onClick: () => { clear(output); button.disabled = false; },
+            }, t('common.hide'))),
+          h('p.small.muted', null, t('admin.reveal.audited')));
+      } catch (error) {
+        toast(t(error.code ?? 'error.generic'), 'bad');
+        button.disabled = false;
+      }
+    },
+  }, t('admin.reveal.button'));
+
+  add(wrap,
+    status.passwordReadable ? button : h('p.small.muted', null,
+      t(status.passwordVaultEnabled ? 'admin.reveal.notStored' : 'admin.reveal.vaultDisabled')),
+    output);
+  return wrap;
+}
+
 async function userDialog(userId, can) {
   const [detail, roles] = await Promise.all([api.adminUser(userId), api.adminRoles().catch(() => ({ roles: [] }))]);
   const body = h('div.stack');
@@ -106,12 +160,14 @@ async function userDialog(userId, can) {
       security.append(
         h('div.card__title', null, t('admin.securityStatus')),
         h('dl.kv', null,
-          h('dt', null, 'Algorithm'), h('dd.mono', null, status.passwordAlgorithm),
-          h('dt', null, 'Password readable'), h('dd.good', null, String(status.passwordReadable)),
+          h('dt', null, t('admin.passwordAlgorithm')), h('dd.mono', null, status.passwordAlgorithm),
+          h('dt', null, t('admin.passwordReadable')),
+          h(`dd.${status.passwordReadable ? 'warn' : 'muted'}`, null,
+            t(status.passwordReadable ? 'common.yes' : 'common.no')),
           h('dt', null, t('auth.sessions')), h('dd', null, String(status.activeSessions)),
-          h('dt', null, 'Failed logins (24 h)'), h('dd', null, String(status.failedLogins24h)),
+          h('dt', null, t('admin.failedLogins24h')), h('dd', null, String(status.failedLogins24h)),
           h('dt', null, t('auth.verifyEmail')), h('dd', null, status.emailVerified ? '✓' : '✗')),
-        h('p.small.muted', null, t('admin.passwordsNeverVisible')),
+        can('users.password_reveal') ? revealControl(userId, status) : null,
       );
     }).catch(() => { clear(security); security.append(h('p.bad', null, t('error.forbidden'))); });
   }

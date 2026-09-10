@@ -100,10 +100,19 @@ export class Tutorial {
       h('div.row.row--between', null,
         h('strong', null, t('tutorial.title')),
         h('div.row', null,
+          // The list of eight steps sat across the middle of the map, which is
+          // the one part of the screen the game is played on. It now shows the
+          // step in hand and expands on request.
+          h('button.icon-btn', {
+            title: t(this.expanded ? 'common.less' : 'common.more'),
+            onClick: () => { this.expanded = !this.expanded; this.render(); },
+          }, this.expanded ? '▴' : '▾'),
           h('button.icon-btn', { title: t('tutorial.hide'), onClick: () => this.hide() }, '–'),
           h('button.icon-btn', { title: t('tutorial.skip'), onClick: () => this.skip() }, '✕'))),
       h('div.small.muted', null, t('tutorial.progress', { done: doneCount, total: state.total })),
       bar(doneCount, state.total, { warnAt: 0, badAt: 0 }));
+
+    this.root.classList.toggle('is-compact', !this.expanded);
 
     clear(this.body);
     for (const [index, step] of state.steps.entries()) {

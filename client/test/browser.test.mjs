@@ -94,11 +94,16 @@ test('an account can be created through the interface', async () => {
   await page.waitForSelector('.card__title:text-is("Spiel laden")', { timeout: 20_000 });
 });
 
+/**
+ * The way in, as a new player actually meets it.
+ *
+ * "Set sail now" is the primary action on the play screen and creates the
+ * character itself - the dialog with name, mode and world is still there, but
+ * it is no longer on the path between registering and the sea. The test drives
+ * the short path, because that is the one that has to keep working.
+ */
 test('a new game starts and the map actually paints', async () => {
-  await page.locator('button.primary', { hasText: 'Neues Spiel' }).click();
-  await page.waitForSelector('.modal', { timeout: 15_000 });
-  await page.locator('.modal input').first().fill('Seebaer');
-  await page.locator('.modal__foot button.primary').click();
+  await page.locator('button.btn-lead').click();
 
   await page.waitForSelector('#map-canvas', { timeout: 90_000 });
   await page.waitForFunction(() => {
@@ -119,6 +124,112 @@ test('a new game starts and the map actually paints', async () => {
     return seen.size;
   });
   assert.ok(distinctColours > 3, `the canvas looks blank (${distinctColours} distinct colours)`);
+});
+
+/**
+ * The long path still works.
+ *
+ * Quick start made the dialog optional, not dead: a player who wants to pick a
+ * name, a mode and a world must still be able to, so the dialog is exercised
+ * as well - here only as far as opening and validating, because a second
+ * character would disturb the session the remaining tests share.
+ */
+/**
+ * Regression: settings must survive a reload.
+ *
+ * mergeDeep used to recurse into a null default (`typeof null === "object"`)
+ * and throw on the first assignment. load() caught that and fell back to the
+ * defaults, so every stored setting was discarded on every single page load -
+ * and because the stored locale went with them, the language picker came back
+ * on every visit. The symptom was the language picker; the damage was the
+ * whole configuration, which is why this is asserted on more than the locale.
+ *
+ * `autoDetected` is the important part of the fixture: it is the null default
+ * that a real session always fills in, so it is what triggered the throw.
+ */
+test('settings survive a reload, and the language picker does not come back', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const fresh = await context.newPage();
+  try {
+    await fresh.goto(base, { waitUntil: 'domcontentloaded' });
+    await fresh.locator('.lang-btn').first().click();
+    await fresh.waitForSelector('.menu-nav', { timeout: 20_000 });
+
+    // Change something in every shape the store holds: a scalar, a nested
+    // object and the null-defaulted one.
+    await fresh.evaluate(() => {
+      window.__schiffi.settings.set('dataSaver', true);
+      window.__schiffi.settings.set('audio.master', 0.21);
+      window.__schiffi.settings.setQuality('low');
+    });
+
+    const before = await fresh.evaluate(() => JSON.parse(localStorage.getItem('schiffi.settings.v1')));
+    assert.ok(before.autoDetected, 'the fixture is wrong: autoDetected was never filled in');
+
+    await fresh.reload({ waitUntil: 'domcontentloaded' });
+    await fresh.waitForSelector('.menu-nav', { timeout: 20_000 });
+
+    assert.equal(await fresh.locator('.lang-grid').count(), 0,
+      'the language picker reappeared after a reload');
+
+    const after = await fresh.evaluate(() => ({
+      locale: window.__schiffi.settings.get('locale'),
+      dataSaver: window.__schiffi.settings.get('dataSaver'),
+      master: window.__schiffi.settings.get('audio.master'),
+      quality: window.__schiffi.settings.get('quality'),
+      preset: window.__schiffi.settings.get('autoDetected')?.preset ?? null,
+    }));
+    assert.equal(after.locale, before.locale, 'the stored language was lost');
+    assert.equal(after.dataSaver, true, 'a scalar setting was lost');
+    assert.equal(after.master, 0.21, 'a nested setting was lost');
+    assert.equal(after.quality, 'low', 'the graphics preset was lost');
+    assert.ok(after.preset, 'the hardware detection result was lost');
+  } finally {
+    await context.close();
+  }
+});
+
+test('the full new game dialog still opens and validates', async () => {
+  // A second browser context, because the shared page is in the middle of a
+  // session the later tests still need. A fresh account here also proves the
+  // dialog works for someone who has never played, which is the case that
+  // matters.
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const fresh = await context.newPage();
+  try {
+    await fresh.goto(base, { waitUntil: 'domcontentloaded' });
+    await fresh.locator('.lang-btn').first().click();
+    await fresh.waitForSelector('.menu-nav', { timeout: 20_000 });
+
+    await fresh.locator('button', { hasText: 'Noch kein Konto?' }).click();
+    await fresh.locator('input[type="email"]').fill('dialog@example.org');
+    await fresh.locator('input[autocomplete="nickname"]').fill('Dialogkapitaen');
+    await fresh.locator('input[type="password"]').fill('Landgang-Kompass-51');
+    await fresh.locator('button.primary', { hasText: 'Registrieren' }).click();
+    await fresh.waitForSelector('.card__title:text-is("Spiel laden")', { timeout: 20_000 });
+
+    await fresh.locator('button', { hasText: 'Neues Spiel' }).click();
+    await fresh.waitForSelector('.modal', { timeout: 15_000 });
+
+    const prefilled = await fresh.locator('.modal input').first().inputValue();
+    assert.equal(prefilled, 'Dialogkapitaen',
+      'the character name was not pre-filled from the account');
+
+    // A name the server would refuse must not close the dialog and lose the
+    // rest of the player's choices.
+    await fresh.locator('.modal input').first().fill('x');
+    await fresh.locator('.modal__foot button.primary').click();
+    await fresh.waitForTimeout(500);
+    assert.equal(await fresh.locator('.modal').count(), 1,
+      'a one-character name was accepted, or the dialog closed on a rejection');
+
+    // And a valid one really starts a game.
+    await fresh.locator('.modal input').first().fill('Dialogfahrt');
+    await fresh.locator('.modal__foot button.primary').click();
+    await fresh.waitForSelector('#map-canvas', { timeout: 90_000 });
+  } finally {
+    await context.close();
+  }
 });
 
 test('the terrain decoded to the grid the server generated', async () => {

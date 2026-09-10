@@ -30,6 +30,9 @@ process.env.PORT = String(PORT);
 process.env.SESSION_SECRET = 'test-secret-'.padEnd(64, 'x');
 process.env.DEFAULT_WORLD_SEED = '424242';
 process.env.SMTP_HOST = '';
+// The suite exercises the password vault, so it needs a key. A fixed test
+// key is fine: the database it opens is thrown away with the temp directory.
+process.env.PASSWORD_VAULT_KEY = 'a'.repeat(64);
 
 // Empty database, SQLite or PostgreSQL depending on TEST_DATABASE_URL.
 await useTestDatabase(TEST_DB);
@@ -39,6 +42,9 @@ let BASE;
 let wsPort;
 let server;
 let session = { cookie: null, token: null };
+// The owner's session, kept aside: several tests register further accounts,
+// and registering signs you in as the account you just made.
+let ownerCookie = null;
 
 before(async () => {
   const { bootstrap } = await import('../src/index.js');
@@ -90,6 +96,7 @@ test('registration creates the first account as owner', async () => {
   assert.equal(me.status, 200);
   assert.deepEqual(me.body.roles, ['owner']);
   assert.ok(me.body.permissions.includes('*'));
+  ownerCookie = session.cookie;
 });
 
 test('a weak password is rejected with a translatable code', async () => {
@@ -110,18 +117,31 @@ test('a duplicate username is rejected', async () => {
   assert.equal(body.code, 'error.usernameTaken');
 });
 
-test('no endpoint returns password material', async () => {
+/**
+ * Password material still leaks from nowhere *except* the one endpoint that is
+ * meant to hand it over. The hash in particular must never appear anywhere:
+ * the vault is a separate copy, and the thing a login is checked against stays
+ * out of every response.
+ */
+test('only the reveal endpoint returns password material', async () => {
   const security = await api('/api/admin/users/1/security');
   assert.equal(security.status, 200);
-  assert.equal(security.body.status.passwordReadable, false);
   assert.equal(security.body.status.passwordAlgorithm, 'argon2id');
   assert.ok(!security.text.includes('$argon2'), 'security status leaked a hash');
+  assert.ok(!security.text.includes('Nordwind-Segel-42'),
+    'security status leaked the password itself - it reports state, not secrets');
 
   const detail = await api('/api/admin/users/1');
   assert.ok(!detail.text.includes('password_hash'), 'user detail leaked the hash column');
+  assert.ok(!detail.text.includes('password_vault'), 'user detail leaked the sealed record');
 
   const exported = await api('/api/auth/export');
   assert.ok(!exported.text.includes('$argon2'), 'data export leaked a hash');
+  assert.ok(!exported.text.includes('password_vault'), 'data export leaked the sealed record');
+
+  const me = await api('/api/auth/me');
+  assert.ok(!me.text.includes('$argon2') && !me.text.includes('password_vault'),
+    'the session probe leaked password material');
 });
 
 test('the world exposes metadata and a compressed terrain blob', async () => {
@@ -581,4 +601,119 @@ test('the simulation is actually running', async () => {
   assert.ok(status.body.tick > 20, `world only ticked ${status.body.tick} times`);
   assert.ok(status.body.npcs > 10, 'no NPC ships were spawned');
   client.close();
+});
+
+// --- the password vault ----------------------------------------------------
+//
+// The vault is the one place in this codebase that deliberately trades safety
+// for an operator feature, so it gets tested from both sides: that it really
+// returns the password when it should, and that it really refuses when it
+// cannot - rather than returning something misleading.
+
+test('a stored password can be read back by an owner, and the read is audited', async () => {
+  // The suite's first account is the owner and holds the wildcard.
+  const registered = await api('/api/auth/register', {
+    method: 'POST',
+    body: { email: 'vault@example.org', username: 'VaultMate', password: 'Sturmflut-Anker-91', locale: 'de' },
+  });
+  assert.equal(registered.status, 200, JSON.stringify(registered.body));
+  const targetId = registered.body.userId;
+
+  // Registering signed us in as the new account; go back to the owner.
+  session.cookie = ownerCookie;
+
+  const revealed = await api(`/api/admin/users/${targetId}/password/reveal`, { method: 'POST' });
+  assert.equal(revealed.status, 200, JSON.stringify(revealed.body));
+  assert.equal(revealed.body.password, 'Sturmflut-Anker-91',
+    'the vault did not return the password that was registered');
+  assert.equal(revealed.body.reason, null);
+
+  const security = await api(`/api/admin/users/${targetId}/security`);
+  assert.equal(security.body.status.passwordReadable, true);
+  assert.equal(security.body.status.passwordAlgorithm, 'argon2id',
+    'the vault must not have replaced the hash used for authentication');
+
+  const audit = await api('/api/admin/audit?action=user.password_revealed');
+  assert.ok(audit.body.entries.some((e) => String(e.target_id) === String(targetId)),
+    'reading a password left no audit entry');
+});
+
+test('the vault does not weaken the login itself', async () => {
+  // The hash is still what a login is checked against: a wrong password must
+  // fail even though the right one is sitting in the vault next to it.
+  const bad = await api('/api/auth/login', {
+    method: 'POST',
+    body: { identifier: 'VaultMate', password: 'Sturmflut-Anker-92' },
+  });
+  assert.equal(bad.status, 401, 'a wrong password was accepted');
+
+  const good = await api('/api/auth/login', {
+    method: 'POST',
+    body: { identifier: 'VaultMate', password: 'Sturmflut-Anker-91' },
+  });
+  assert.equal(good.status, 200, 'the right password stopped working');
+  session.cookie = ownerCookie;
+});
+
+test('an ordinary account cannot read anyone\'s password', async () => {
+  const outsider = await api('/api/auth/register', {
+    method: 'POST',
+    body: { email: 'deckhand@example.org', username: 'Deckhand', password: 'Kompass-Laterne-77', locale: 'en' },
+  });
+  assert.equal(outsider.status, 200);
+
+  // Still signed in as Nosy, who holds no admin permission at all.
+  const attempt = await api('/api/admin/users/1/password/reveal', { method: 'POST' });
+  assert.equal(attempt.status, 403, 'a player without the permission read a password');
+  session.cookie = ownerCookie;
+});
+
+test('a password set before the vault existed is reported as unreadable, not as an error', async () => {
+  const { getDatabase } = await import('../src/db/index.js');
+  const db = getDatabase();
+  const row = await db.get('SELECT id FROM users WHERE username_norm = ?', ['vaultmate']);
+  // Exactly the state of an account that predates the key.
+  await db.run('UPDATE users SET password_vault = NULL, password_vault_at = NULL WHERE id = ?', [row.id]);
+
+  const revealed = await api(`/api/admin/users/${row.id}/password/reveal`, { method: 'POST' });
+  assert.equal(revealed.status, 200);
+  assert.equal(revealed.body.password, null);
+  assert.equal(revealed.body.reason, 'notStored',
+    'the console would have shown a generic failure instead of the real reason');
+
+  const security = await api(`/api/admin/users/${row.id}/security`);
+  assert.equal(security.body.status.passwordReadable, false);
+});
+
+test('changing a password refreshes what the vault holds', async () => {
+  const login = await api('/api/auth/login', {
+    method: 'POST',
+    body: { identifier: 'Deckhand', password: 'Kompass-Laterne-77' },
+  });
+  assert.equal(login.status, 200);
+
+  const changed = await api('/api/auth/password', {
+    method: 'POST',
+    body: { currentPassword: 'Kompass-Laterne-77', newPassword: 'Steuerbord-Nordlicht-08' },
+  });
+  assert.equal(changed.status, 200, JSON.stringify(changed.body));
+
+  const { getDatabase } = await import('../src/db/index.js');
+  const row = await getDatabase().get('SELECT id FROM users WHERE username_norm = ?', ['deckhand']);
+  session.cookie = ownerCookie;
+
+  const revealed = await api(`/api/admin/users/${row.id}/password/reveal`, { method: 'POST' });
+  assert.equal(revealed.body.password, 'Steuerbord-Nordlicht-08',
+    'the vault still held the old password after a change');
+});
+
+test('the vault stores ciphertext, never the password itself', async () => {
+  const { getDatabase } = await import('../src/db/index.js');
+  const rows = await getDatabase().all('SELECT password_vault FROM users WHERE password_vault IS NOT NULL');
+  assert.ok(rows.length > 0, 'nothing was sealed at all');
+  for (const row of rows) {
+    assert.ok(!/Steuerbord-Nordlicht-08|Sturmflut-Anker-91|Nordwind-Segel-42/.test(row.password_vault),
+      'a password was written to the database in clear text');
+    assert.match(row.password_vault, /^v1\./, 'the sealed record is not in the expected format');
+  }
 });

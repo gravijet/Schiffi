@@ -42,7 +42,12 @@ export const GRAPHICS_OPTIONS = {
 
 export const DEFAULTS = {
   locale: null,
-  theme: 'auto',
+  // Dark by default rather than 'auto'. Schiffi is a night-sea game: the
+  // terrain palette, the brass accents and the map's own contrast are built
+  // for a dark ground, and following the operating system meant a player on a
+  // light desktop met a washed-out version of a picture that was never meant
+  // to be light. Both other options stay available in the settings.
+  theme: 'dark',
   quality: 'auto',
   autoDetected: null,
   graphics: presetValues('medium'),
@@ -169,10 +174,20 @@ export class Settings extends EventTarget {
   }
 
   load() {
+    let raw = null;
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) this.data = mergeDeep(structuredClone(DEFAULTS), JSON.parse(raw));
-    } catch { /* corrupt or unavailable storage: keep the defaults */ }
+      raw = localStorage.getItem(STORAGE_KEY);
+    } catch { return this.data; }   // private mode: storage is not readable
+    if (!raw) return this.data;
+
+    try {
+      this.data = mergeDeep(structuredClone(DEFAULTS), JSON.parse(raw));
+    } catch (error) {
+      // Falling back to the defaults throws the player's whole configuration
+      // away, so it must never happen quietly again.
+      console.warn('[schiffi] stored settings could not be read:', error);
+      this.data = structuredClone(DEFAULTS);
+    }
     return this.data;
   }
 
@@ -251,9 +266,23 @@ export class Settings extends EventTarget {
   }
 }
 
+/**
+ * Merge stored settings over the defaults.
+ *
+ * The null check on the *target* is the whole point: `typeof null === 'object'`
+ * is true, so a default of `null` (locale, autoDetected) used to send this
+ * function recursing into null, where the first assignment threw. The throw was
+ * swallowed by load()'s catch, which then fell back to the defaults - so every
+ * saved setting was silently discarded on every single page load, and the
+ * language picker reappeared on each visit.
+ */
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 function mergeDeep(target, source) {
   for (const [key, value] of Object.entries(source ?? {})) {
-    if (value && typeof value === 'object' && !Array.isArray(value) && typeof target[key] === 'object') {
+    if (isPlainObject(value) && isPlainObject(target[key])) {
       mergeDeep(target[key], value);
     } else if (value !== undefined) {
       target[key] = value;

@@ -84,7 +84,16 @@ async function main() {
     onLogout: () => { stopGame(); },
   });
   await state.menu.refreshSession();
+  // /superadmin has to work as a typed address and survive a reload, so the
+  // path is read once here and then again on every back/forward step.
+  state.menu.applyRoute();
   state.menu.mount(app);
+
+  window.addEventListener('popstate', () => {
+    if (state.running) return;          // in game: the map owns the screen
+    state.menu.screen = MainMenu.routeFor(location.pathname) ?? 'play';
+    state.menu.render();
+  });
 
   progress(1, '');
   boot?.remove();

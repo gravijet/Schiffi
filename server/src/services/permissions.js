@@ -19,6 +19,9 @@ export const PERMISSIONS = [
   p('users.revoke_sessions', 'users', 'Revoke a user\'s active sessions'),
   p('users.security_status', 'users', 'View a user\'s security status'),
   p('users.impersonate_never', 'users', 'Reserved: impersonation is not implemented by design'),
+  // Reads a stored password back in clear text. Held by the owner role only
+  // unless an owner deliberately grants it further; every use is audited.
+  p('users.password_reveal', 'users', 'Show a user\'s stored password in clear text'),
 
   // --- roles --------------------------------------------------------------
   p('roles.view', 'roles', 'View roles and their permissions'),

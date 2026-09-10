@@ -7,6 +7,7 @@
  */
 import { listWorlds, loadWorld, getLoadedWorld, worldMeta, terrainBlob, createWorld } from '../game/worldManager.js';
 import { listCharacters, createCharacter, loadCharacter } from '../game/characters.js';
+import { worldPortrait } from '../game/mapImage.js';
 import { marketFor, priceStats } from '../game/economy.js';
 import { crewOffers, creditLimit } from '../game/actions.js';
 import { boardFor } from '../game/missions.js';
@@ -97,6 +98,33 @@ export function registerGameRoutes(router, { simulations }) {
       'Cache-Control': 'public, max-age=31536000, immutable',
       ETag: etag,
       Vary: 'Accept-Encoding',
+    });
+    ctx.res.end(body);
+    return undefined;
+  }, { auth: false });
+
+  /**
+   * A small PNG of the whole world, for the menu backdrop.
+   *
+   * Derived entirely from the seed, so it carries the same immutable caching
+   * as the terrain blob. The theme is part of the key because the light and
+   * dark palettes are different pictures, not the same picture tinted.
+   */
+  router.get('/api/worlds/:id/portrait.png', async (ctx) => {
+    const instance = getLoadedWorld(ctx.params.id) ?? await loadWorld(ctx.params.id);
+    const theme = ctx.query.theme === 'light' ? 'light' : 'dark';
+    const body = worldPortrait(instance, theme);
+    const etag = `"portrait-${instance.seed}-${WORLDGEN_VERSION}-${theme}"`;
+
+    if (ctx.req.headers['if-none-match'] === etag) {
+      ctx.res.writeHead(304, { ETag: etag });
+      return ctx.res.end();
+    }
+    ctx.res.writeHead(200, {
+      'Content-Type': 'image/png',
+      'Content-Length': body.length,
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      ETag: etag,
     });
     ctx.res.end(body);
     return undefined;

@@ -90,15 +90,35 @@ terrain, so speed and collision are not client decisions.
 
 ### Passwords
 
-Passwords are hashed with Argon2id and never stored, logged or returned. There
-is no code path that turns a stored hash back into a password, and no endpoint
-that exposes password material — including in the administration interface. An
-operator with the right permission can *trigger a reset e-mail*, revoke
-sessions or ban an account; `GET /api/admin/users/:id/security` reports status
-only, and states `passwordReadable: false` as part of its contract.
+Logins are checked against an Argon2id hash and nothing else. The hash is
+one-way and stays that way.
+
+This installation additionally keeps a **recoverable copy** of each password,
+because the operator requires a "show password" function in the superadmin
+console. The copy is encrypted with AES-256-GCM under `PASSWORD_VAULT_KEY`,
+which lives in the environment and never in the database, and is readable only
+through `POST /api/admin/users/:id/password/reveal` behind the
+`users.password_reveal` permission. Every call is written to the audit log
+before the value is returned.
+
+What that costs, stated plainly rather than buried:
+
+- anyone holding **both** the key and a database dump holds every password
+  stored since the key was configured;
+- a password reused elsewhere is exposed elsewhere too;
+- passwords set **before** the key existed can never be shown — Argon2id
+  cannot be reversed — so `revealPassword` reports `notStored` for them until
+  the account's next password change.
+
+Leave `PASSWORD_VAULT_KEY` empty and none of this happens: no copy is written,
+the reveal endpoint answers `vaultDisabled`, and the Argon2id hash is all there
+is. `GET /api/admin/users/:id/security` reports `passwordReadable` per account,
+which is the truth for that account rather than a blanket claim.
 
 Roles are data, not code: an administrator with `roles.create` composes new
-roles at runtime from a fixed catalogue of granular permissions.
+roles at runtime from a fixed catalogue of granular permissions. A *superadmin*
+is simply an account whose role carries the `*` wildcard; the console for it
+lives at `/superadmin`.
 
 ### Performance
 

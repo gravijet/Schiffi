@@ -109,12 +109,45 @@
 .lang-btn.is-active { border-color: var(--brass-500); background: rgba(201,162,39,0.12); }
 
 /* --- main menu ----------------------------------------------------------- */
+/*
+ * The menu stands on the world it is a menu for.
+ *
+ * The backdrop is the real map of the world this server is running - drawn by
+ * the server from the same seed and the same palette as the live map, served
+ * as a ~23 KiB PNG (see server/src/game/mapImage.js). It is set as a CSS
+ * custom property by the menu once the world list is known, so a failed fetch
+ * simply leaves the gradient behind rather than an empty screen.
+ *
+ * Two layers sit over it: a vertical gradient that keeps text legible wherever
+ * an island happens to fall, and a vignette that pulls the eye inwards.
+ */
 #menu-screen {
   position: fixed; inset: 0; z-index: 70; overflow: auto;
+  background: var(--sea-900);
+}
+
+#menu-screen::before {
+  content: ''; position: fixed; inset: 0; z-index: -2;
+  background-image: var(--world-portrait, none);
+  background-size: cover; background-position: center;
+  /* The portrait is a map, not a photograph: at full strength it competes
+     with the interface, and blurring it would throw away the coastlines that
+     make it worth showing at all. */
+  opacity: 0.72;
+}
+
+#menu-screen::after {
+  content: ''; position: fixed; inset: 0; z-index: -1;
   background:
-    radial-gradient(circle at 22% 18%, rgba(58,99,123,0.35), transparent 45%),
-    radial-gradient(circle at 78% 82%, rgba(201,162,39,0.14), transparent 42%),
-    var(--sea-900);
+    radial-gradient(ellipse at 62% 45%, transparent 30%, rgba(6, 15, 22, 0.35) 72%, rgba(6, 15, 22, 0.78) 100%),
+    linear-gradient(100deg, rgba(6, 15, 22, 0.92) 0%, rgba(6, 15, 22, 0.72) 26%, rgba(6, 15, 22, 0.18) 62%, rgba(6, 15, 22, 0.34) 100%);
+}
+
+:root[data-theme="light"] #menu-screen::before { opacity: 0.42; }
+:root[data-theme="light"] #menu-screen::after {
+  background:
+    radial-gradient(ellipse at 50% 40%, transparent 20%, rgba(242, 238, 228, 0.5) 70%, rgba(242, 238, 228, 0.88) 100%),
+    linear-gradient(100deg, rgba(242, 238, 228, 0.95) 0%, rgba(242, 238, 228, 0.88) 34%, rgba(242, 238, 228, 0.6) 100%);
 }
 .menu-shell {
   min-height: 100%; display: grid; grid-template-columns: 300px 1fr;
@@ -124,6 +157,14 @@
   border-right: 1px solid var(--panel-border);
   padding: 24px 16px; display: flex; flex-direction: column; gap: 4px;
   background: var(--menu-bg);
+  backdrop-filter: blur(3px);
+}
+
+/* The wordmark carries the identity, so it gets the one piece of ornament in
+   the whole interface: a brass rule under it, the width of the column. */
+.menu-nav .logo::after {
+  content: ''; display: block; height: 2px; margin-top: 14px;
+  background: linear-gradient(90deg, var(--brass-500), transparent);
 }
 .menu-nav .logo { margin-bottom: 20px; }
 .menu-nav .logo h1 { margin: 0; font-size: 30px; letter-spacing: 0.3em; text-transform: uppercase; color: var(--brass-300); }
@@ -178,6 +219,13 @@
 /* The top-centre strip is the only place on the chart that no dock claims:
    the ship panel is left, the port panel right, chat and the action bar below.
    Putting the checklist anywhere else buried one of them. */
+/*
+ * The tutorial rides at the top of the map, above the action bar's line of
+ * sight and out of the middle. Compact by default: the step in hand plus the
+ * progress bar, with the rest a click away.
+ */
+#tutorial.is-compact .tutorial__step:not(.is-current) { display: none; }
+
 #tutorial {
   position: fixed; top: 46px; left: 50%; transform: translateX(-50%);
   width: 380px; max-width: calc(100vw - 16px);
@@ -259,3 +307,50 @@
   .icon-btn { width: 32px; height: 32px; }
   td, th { padding: 8px 6px; }
 }
+
+
+/* --- superadmin ---------------------------------------------------------- */
+
+.superadmin__head { margin-bottom: 14px; }
+.superadmin__head h2 {
+  /* Marked out from the ordinary administration heading on purpose: this
+     screen can do things the other one cannot. */
+  color: var(--bad);
+  border-left: 3px solid var(--bad); padding-left: 10px;
+}
+.superadmin__head .lede { padding-left: 13px; }
+
+/*
+ * The revealed password.
+ *
+ * Monospaced and selectable, because the point of the control is to read a
+ * password off the screen or copy it. Boxed in the danger colour so that the
+ * one place in this interface where a credential is visible never looks like
+ * an ordinary field.
+ */
+.reveal {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 8px; padding: 8px 10px;
+  border: 1px solid var(--bad); border-radius: var(--radius);
+  background: rgba(211, 89, 63, 0.08);
+}
+.reveal__value {
+  font: var(--mono); font-size: 14px; letter-spacing: 0.04em;
+  color: var(--parchment); user-select: all; word-break: break-all; flex: 1;
+}
+button.small { padding: 3px 8px; font-size: 12px; }
+
+
+/*
+ * The one action the play screen is actually for.
+ *
+ * Sized so it is unmistakably the way in, and placed above the save list
+ * rather than below it: a new player should not have to read an empty list
+ * before finding the button that fills it.
+ */
+.lead-action { margin-bottom: 18px; }
+.lead-action .btn-lead {
+  font-size: 16px; padding: 13px 26px; letter-spacing: 0.06em;
+  text-transform: uppercase; font-weight: 600;
+}
+.lead-action p { margin: 8px 0 0; max-width: 52ch; }

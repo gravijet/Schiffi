@@ -2,14 +2,17 @@
  * Administration endpoints.
  *
  * Every route is gated by a granular permission, and every mutation writes to
- * the audit log.  There is deliberately no endpoint that returns password
- * material: `GET /api/admin/users/:id/security` reports *status* only, and the
- * strongest action available is triggering a reset e-mail.
+ * the audit log.
+ *
+ * One route here returns password material: POST /users/:id/password/reveal,
+ * behind `users.password_reveal`. It exists because this installation is
+ * operated that way; see services/passwordVault.js for the trade-off it makes.
+ * `GET /users/:id/security` still reports status only.
  */
 import * as rbac from '../services/rbac.js';
 import * as auth from '../services/auth.js';
 import { PERMISSIONS } from '../services/permissions.js';
-import { readAuditLog } from '../services/audit.js';
+import { readAuditLog, audit } from '../services/audit.js';
 import { getDatabase } from '../db/index.js';
 import { badRequest, notFound } from '../http/respond.js';
 
@@ -108,6 +111,28 @@ export function registerAdminRoutes(router) {
   router.get('/api/admin/users/:id/security', async (ctx) => ({
     status: await auth.securityStatus(ctx.params.id),
   }), { permission: 'users.security_status' });
+
+  /**
+   * Show a stored password in clear text.
+   *
+   * POST, not GET: this must never end up in a browser history entry, a proxy
+   * log or a shared URL. The response is marked no-store for the same reason.
+   * Every call is written to the audit log BEFORE the value is returned, so a
+   * reveal is recorded even if the response never reaches the client.
+   */
+  router.post('/api/admin/users/:id/password/reveal', async (ctx) => {
+    const result = await auth.revealPassword(ctx.params.id);
+    await audit(ctx.actor, 'user.password_revealed', 'user', String(ctx.params.id),
+      { granted: result.password !== null, reason: result.reason ?? 'ok' });
+
+    ctx.res.setHeader('Cache-Control', 'no-store, max-age=0');
+    ctx.res.setHeader('Pragma', 'no-cache');
+    return {
+      password: result.password,
+      reason: result.reason,
+      storedAt: result.storedAt ?? null,
+    };
+  }, { permission: 'users.password_reveal' });
 
   router.post('/api/admin/users/:id/reset-password', async (ctx) => {
     const result = await auth.triggerPasswordReset(ctx.params.id, ctx.actor);
