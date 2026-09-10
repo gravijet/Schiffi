@@ -88,11 +88,34 @@ function renderEntry(key, value, indent) {
   const pad = ' '.repeat(indent);
   if (value && typeof value === 'object') {
     const inner = Object.entries(value)
-      .map(([k, v]) => `${pad}  ${k}: ${quote(v)},`)
+      .map(([k, v]) => renderEntry(k, v, indent + 2))
       .join('\n');
     return `${pad}${key}: {\n${inner}\n${pad}},`;
   }
   return `${pad}${key}: ${quote(value)},`;
+}
+
+/**
+ * Resolve one spec entry to the value for `lang`.
+ *
+ * An entry is either a per-language map ({ de, en, … }) or a group of nested
+ * keys, each of which is itself a per-language map. The two are told apart by
+ * whether the keys are language codes, which is unambiguous because no
+ * translation key is ever named "de" or "zh".
+ */
+function resolveEntry(spec, lang, path) {
+  if (!spec || typeof spec !== 'object') throw new Error(`${path}: expected an object`);
+  const keys = Object.keys(spec);
+  const isLangMap = keys.length > 0 && keys.every((key) => LANGS.includes(key));
+
+  if (isLangMap) {
+    const value = spec[lang] ?? spec.en ?? spec.de;
+    if (value === undefined) throw new Error(`${path}: no value for ${lang} and no fallback`);
+    return value;
+  }
+  const out = {};
+  for (const [key, inner] of Object.entries(spec)) out[key] = resolveEntry(inner, lang, `${path}.${key}`);
+  return out;
 }
 
 /**
@@ -123,10 +146,8 @@ export function applySpec(spec, { dir = LOCALE_DIR, langs = LANGS } = {}) {
       // Re-scan every time: an earlier splice shifted all later offsets.
       const sections = scanSections(src);
       const pairs = [];
-      for (const [key, byLang] of Object.entries(entries)) {
-        const value = byLang[lang] ?? byLang.en ?? byLang.de;
-        if (value === undefined) throw new Error(`${sectionName}.${key}: no value for ${lang} and no fallback`);
-        pairs.push([key, value]);
+      for (const [key, spec] of Object.entries(entries)) {
+        pairs.push([key, resolveEntry(spec, lang, `${sectionName}.${key}`)]);
       }
 
       const section = sections.get(sectionName);

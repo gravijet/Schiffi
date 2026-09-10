@@ -144,6 +144,29 @@ export const api = {
   insurance: (characterId) => request(`/api/characters/${characterId}/insurance`),
   report: (data) => request('/api/reports', { method: 'POST', body: data }),
 
+  // --- support, news and adverts -------------------------------------------
+  createTicket: (data) => request('/api/support/tickets', { method: 'POST', body: data }),
+  tickets: () => request('/api/support/tickets'),
+  ticket: (id) => request(`/api/support/tickets/${id}`),
+  replyTicket: (id, body) =>
+    request(`/api/support/tickets/${id}/messages`, { method: 'POST', body: { body } }),
+  closeTicket: (id) => request(`/api/support/tickets/${id}/close`, { method: 'POST' }),
+  news: (locale) => request(`/api/news${locale ? `?locale=${encodeURIComponent(locale)}` : ''}`),
+  ads: () => request('/api/ads'),
+  adClick: (id) => request(`/api/ads/${id}/click`, { method: 'POST' }),
+  submitAd: (data) => request('/api/ads', { method: 'POST', body: data }),
+
+  adminTickets: (status) => request(`/api/admin/support/tickets${status ? `?status=${status}` : ''}`),
+  adminUpdateTicket: (id, data) =>
+    request(`/api/admin/support/tickets/${id}`, { method: 'PATCH', body: data }),
+  adminNews: () => request('/api/admin/news'),
+  adminCreateNews: (data) => request('/api/admin/news', { method: 'POST', body: data }),
+  adminUpdateNews: (id, data) => request(`/api/admin/news/${id}`, { method: 'PATCH', body: data }),
+  adminDeleteNews: (id) => request(`/api/admin/news/${id}`, { method: 'DELETE' }),
+  adminAds: (status) => request(`/api/admin/ads${status ? `?status=${status}` : ''}`),
+  adminReviewAd: (id, status, note) =>
+    request(`/api/admin/ads/${id}`, { method: 'POST', body: { status, note } }),
+
   // --- admin --------------------------------------------------------------
   adminRoles: () => request('/api/admin/roles'),
   adminPermissions: () => request('/api/admin/permissions'),

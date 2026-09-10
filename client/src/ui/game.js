@@ -16,7 +16,7 @@ import { SHIP_CLASSES, UPGRADES, upgradeCost } from '@schiffi/shared/data/ships.
 import { currentLocale } from '../state/i18n.js';
 import { settingsView } from './settingsPanel.js';
 import { missionsView } from './panels/missions.js';
-import { land as goAshore } from './panels/expedition.js';
+import { land as goAshore, nearestAnchorage } from './panels/expedition.js';
 import { combatView } from './panels/combat.js';
 import { guildView } from './panels/guild.js';
 import { exchangeView } from './panels/exchange.js';
@@ -93,6 +93,24 @@ export class GameUI {
       h('button.icon-btn', { title: t('menu.settings'), onClick: () => this.openSettings() }, '⚙'),
       h('button.icon-btn', { title: t('common.back'), onClick: () => this.onLeave?.() }, '⏻'),
     );
+  }
+
+  /**
+   * Grey the landing button out while no beach is in reach.
+   *
+   * Called from the render loop, so it has to be cheap and must not touch the
+   * DOM unless something actually changed.
+   */
+  updateAshoreButton() {
+    const button = this.actionbar.querySelector('#act-explore');
+    if (!button) return;
+    const found = nearestAnchorage(this);
+    const reachable = Boolean(found?.inReach);
+    if (button.disabled === !reachable) return;
+    button.disabled = !reachable;
+    button.title = found && !reachable
+      ? t('explore.nearestBeach', { distance: Math.round(found.distance) })
+      : '';
   }
 
   updateTopbar() {
@@ -215,10 +233,13 @@ export class GameUI {
   async refreshPort() {
     const character = this.character;
     if (!character?.docked || !character.portId) {
+      this.portData = null;
       this.portPanel.setTitle(t('port.title'));
       this.portPanel.setBody(h('p.small.muted', null, t('error.notInPort')));
       return;
     }
+    // Called on every dock change, so skip the round trip while it is closed.
+    if (this.portPanel.classList.contains('is-collapsed')) return;
     this.portPanel.setBody(h('p.small.muted', null, t('common.loading')));
     try {
       this.portData = await api.port(character.worldId, character.portId, character.id);

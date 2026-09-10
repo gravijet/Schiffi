@@ -20,6 +20,7 @@ import { registerAdminRoutes } from './routes/admin.js';
 import { registerGameRoutes } from './routes/game.js';
 import { registerSystemRoutes } from './routes/system.js';
 import { registerGameplayRoutes, reloadEvents } from './routes/gameplay.js';
+import { registerContentRoutes } from './routes/content.js';
 import { MSG } from '@schiffi/shared/net/protocol.js';
 
 const simulations = new Map();   // worldId -> Simulation
@@ -42,6 +43,7 @@ export async function bootstrap({ listen = true } = {}) {
   registerGameRoutes(http.router, { simulations });
   registerSystemRoutes(http.router, { gateway, simulations });
   registerGameplayRoutes(http.router, { gateway });
+  registerContentRoutes(http.router);
   gateway.attach(http);
 
   // Bring up every world that already has characters, plus a default one.

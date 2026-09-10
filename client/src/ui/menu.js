@@ -491,34 +491,165 @@ export class MainMenu {
   }
 
   newsScreen() {
-    return h('div', null,
-      h('h2', null, t('news.title')),
-      h('p.lede', null, t('news.noNews')));
+    const root = h('div', null, h('h2', null, t('news.title')));
+    const body = h('div.stack', null, h('p.small.muted', null, t('common.loading')));
+    root.append(body);
+
+    api.news(currentLocale()).then(({ posts }) => {
+      clear(body);
+      if (!posts.length) {
+        body.append(h('p.lede', null, t('news.noNews')));
+        return;
+      }
+      for (const post of posts) {
+        body.append(h('div.card', null,
+          h('div.card__title', null, post.title),
+          h('div.small.muted', null,
+            t('news.published', { date: new Date(post.publishedAt).toLocaleDateString(currentLocale()) })),
+          // Server text, so it goes in as text: never as markup.
+          h('p', { style: { whiteSpace: 'pre-wrap' } }, post.body)));
+      }
+    }).catch((error) => {
+      clear(body);
+      body.append(h('p.bad', null, t(error.code ?? 'error.generic')));
+    });
+
+    return root;
   }
 
+  /**
+   * Support.
+   *
+   * A ticket is a real conversation: it is stored, staff can answer it and the
+   * answer shows up here. The form used to post to a route that did not exist,
+   * which made it a button that could only ever fail.
+   */
   supportScreen() {
-    const subject = h('input', { placeholder: t('support.subject') });
+    const root = h('div', null, h('h2', null, t('support.title')));
+    if (!this.session) {
+      root.append(h('div.card', null, h('p', null, t('error.unauthorized'))), this.authCard());
+      return root;
+    }
+
+    const list = h('div.stack');
+    const detail = h('div.stack');
+
+    const refresh = async () => {
+      clear(list);
+      list.append(h('p.small.muted', null, t('common.loading')));
+      try {
+        const { tickets } = await api.tickets();
+        clear(list);
+        if (!tickets.length) {
+          list.append(h('p.small.muted', null, t('support.none')));
+          return;
+        }
+        for (const ticket of tickets) {
+          list.append(h('div.card.card--pick', {
+            onClick: () => openTicket(ticket.id),
+          },
+          h('div.row.row--between', null,
+            h('div.grow', null,
+              h('div', null, ticket.subject),
+              h('div.small.muted', null,
+                `${t(`support.categories.${ticket.category}`)} · `
+                + `${new Date(ticket.updatedAt).toLocaleString(currentLocale())}`)),
+            h('span.small', { class: ticket.status === 'closed' ? 'muted' : 'good' },
+              t(`support.${ticket.status === 'answered' ? 'answered' : ticket.status}`)))));
+        }
+      } catch (error) {
+        clear(list);
+        list.append(h('p.bad', null, t(error.code ?? 'error.generic')));
+      }
+    };
+
+    const openTicket = async (id) => {
+      clear(detail);
+      detail.append(h('p.small.muted', null, t('common.loading')));
+      try {
+        const { ticket } = await api.ticket(id);
+        clear(detail);
+        const thread = h('div.stack');
+        for (const message of ticket.messages) {
+          thread.append(h('div.card', null,
+            h('div.small.muted', null,
+              `${message.staff ? t('support.staffBadge') : (message.author ?? '')} · `
+              + new Date(message.at).toLocaleString(currentLocale())),
+            h('p', { style: { whiteSpace: 'pre-wrap', margin: 0 } }, message.body)));
+        }
+
+        const reply = h('textarea', { rows: 4, placeholder: t('support.replyPlaceholder') });
+        add(detail,
+          h('h3', null, `${t('support.ticket', { id: ticket.id })} · ${ticket.subject}`),
+          thread,
+          ticket.status === 'closed'
+            ? h('p.small.muted', null, t('support.closedNotice'))
+            : h('div.stack', null,
+              h('div.field', null, reply),
+              h('div.row', null,
+                h('button.primary', {
+                  onClick: async () => {
+                    try {
+                      await api.replyTicket(ticket.id, reply.value.trim());
+                      toast(t('support.replySent'), 'good');
+                      openTicket(ticket.id);
+                      refresh();
+                    } catch (error) { toast(t(error.code ?? 'error.generic'), 'bad'); }
+                  },
+                }, t('support.reply')),
+                h('button.ghost', {
+                  onClick: async () => {
+                    try {
+                      await api.closeTicket(ticket.id);
+                      toast(t('support.closed'), 'info');
+                      openTicket(ticket.id);
+                      refresh();
+                    } catch (error) { toast(t(error.code ?? 'error.generic'), 'bad'); }
+                  },
+                }, t('support.close')))));
+      } catch (error) {
+        clear(detail);
+        detail.append(h('p.bad', null, t(error.code ?? 'error.generic')));
+      }
+    };
+
+    const subject = h('input', { placeholder: t('support.subject'), maxLength: 160 });
+    const category = h('select', null,
+      ...['general', 'account', 'payment', 'bug', 'report', 'other'].map((key) =>
+        h('option', { value: key }, t(`support.categories.${key}`))));
     const message = h('textarea', { rows: 6, placeholder: t('support.message') });
-    return h('div', null,
-      h('h2', null, t('support.title')),
+
+    add(root,
       h('div.card', null,
         h('div.card__title', null, t('support.newTicket')),
         h('div.field', null, h('label', null, t('support.subject')), subject),
+        h('div.field', null, h('label', null, t('support.category')), category),
         h('div.field', null, h('label', null, t('support.message')), message),
         h('button.primary', {
           onClick: async () => {
-            if (!this.session) { toast(t('error.unauthorized'), 'bad'); return; }
             try {
-              await api.post('/api/support/tickets', {
-                subject: subject.value.trim(), body: message.value.trim(),
+              const ticket = await api.createTicket({
+                subject: subject.value.trim(),
+                category: category.value,
+                body: message.value.trim(),
               });
-              subject.value = ''; message.value = '';
+              subject.value = '';
+              message.value = '';
               toast(t('support.created'), 'good');
+              await refresh();
+              openTicket(ticket.id);
             } catch (error) {
-              toast(t(error.code ?? 'error.generic'), 'bad');
+              toast(t(error.code === 'error.rateLimited' ? 'support.tooMany'
+                : (error.code ?? 'error.generic')), 'bad');
             }
           },
-        }, t('support.newTicket'))));
+        }, t('support.newTicket'))),
+      h('div.card__title', null, t('support.yourTickets')),
+      list,
+      detail);
+
+    refresh();
+    return root;
   }
 
   settingsScreen() {

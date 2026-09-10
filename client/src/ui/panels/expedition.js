@@ -12,6 +12,7 @@ import { countdown } from './missions.js';
 import { goodById } from '@schiffi/shared/data/goods.js';
 import { currentLocale } from '../../state/i18n.js';
 import { ACTIVITY_COST } from '@schiffi/shared/data/discoveries.js';
+import { LANDING_RANGE } from '@schiffi/shared/data/costs.js';
 
 const goodName = (goodId, fallback) => {
   const good = goodById(Number(goodId));
@@ -175,6 +176,28 @@ export function openExpedition(ctx, report) {
   }, 1000);
 
   return dialog;
+}
+
+/**
+ * The nearest landing beach and how far off it is.
+ *
+ * The same list and the same range the server uses, so the button can say
+ * whether pressing it will do anything. A small boat coasts for a couple of
+ * seconds after the keys are let go, which is long enough to drift out of
+ * reach between deciding to land and clicking.
+ */
+export function nearestAnchorage(ctx) {
+  const self = ctx.socket.self;
+  const anchorages = ctx.world?.anchorages;
+  if (!self || !anchorages?.length) return null;
+
+  let best = null;
+  let bestDistance = Infinity;
+  for (const anchorage of anchorages) {
+    const distance = Math.hypot(anchorage.x - self.x, anchorage.y - self.y);
+    if (distance < bestDistance) { bestDistance = distance; best = anchorage; }
+  }
+  return best ? { ...best, distance: bestDistance, inReach: bestDistance <= LANDING_RANGE } : null;
 }
 
 /** Sail-to-shore: ask the server to land, then open the dialog on its report. */

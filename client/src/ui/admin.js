@@ -11,6 +11,7 @@
 import { h, add, clear, toast, modal, confirmDialog, tabs, debounce } from './dom.js';
 import { t, td } from '../state/i18n.js';
 import { api } from '../net/api.js';
+import { supportTab, newsTab, adsTab } from './adminContent.js';
 
 export function adminView(session) {
   const permissions = new Set(session?.permissions ?? []);
@@ -25,6 +26,9 @@ export function adminView(session) {
       can('users.view') && { key: 'users', label: t('admin.users') },
       can('roles.view') && { key: 'roles', label: t('admin.roles') },
       can('audit.view') && { key: 'audit', label: t('admin.auditLog') },
+      can('support.view') && { key: 'support', label: t('support.title') },
+      can('news.view') && { key: 'news', label: t('news.title') },
+      can('ads.view') && { key: 'ads', label: t('ads.title') },
       can('system.status') && { key: 'system', label: t('server.status') },
       can('system.integrations') && { key: 'integrations', label: 'Cloudflare' },
     ].filter(Boolean);
@@ -37,8 +41,11 @@ export function adminView(session) {
         active === 'users' ? usersTab(can)
           : active === 'roles' ? rolesTab(can)
             : active === 'audit' ? auditTab()
-              : active === 'integrations' ? integrationsTab()
-                : systemTab()),
+              : active === 'support' ? supportTab(can)
+                : active === 'news' ? newsTab(can)
+                  : active === 'ads' ? adsTab(can)
+                    : active === 'integrations' ? integrationsTab()
+                      : systemTab()),
     );
   };
   render();

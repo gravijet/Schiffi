@@ -386,6 +386,132 @@ test('an anonymous request cannot reach admin endpoints', async () => {
   session.cookie = saved;
 });
 
+test('a support ticket is stored, answered and closed', async () => {
+  const created = await api('/api/support/tickets', {
+    method: 'POST',
+    body: { subject: 'Mein Schiff steckt fest', category: 'bug', body: 'Es bewegt sich nicht mehr vom Fleck.' },
+  });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  const ticketId = created.body.id;
+
+  const mine = await api('/api/support/tickets');
+  assert.equal(mine.body.tickets.length, 1);
+  assert.equal(mine.body.tickets[0].subject, 'Mein Schiff steckt fest');
+
+  const read = await api(`/api/support/tickets/${ticketId}`);
+  assert.equal(read.body.ticket.messages.length, 1);
+  assert.equal(read.body.ticket.messages[0].body, 'Es bewegt sich nicht mehr vom Fleck.');
+  // The author is not staff on their own ticket, even holding every permission.
+  assert.equal(read.body.ticket.messages[0].staff, false);
+
+  const reply = await api(`/api/support/tickets/${ticketId}/messages`, {
+    method: 'POST', body: { body: 'Wir sehen uns das an.' },
+  });
+  assert.equal(reply.status, 200);
+
+  const closed = await api(`/api/support/tickets/${ticketId}/close`, { method: 'POST' });
+  assert.equal(closed.status, 200);
+
+  const afterClose = await api(`/api/support/tickets/${ticketId}/messages`, {
+    method: 'POST', body: { body: 'noch etwas' },
+  });
+  assert.equal(afterClose.status, 400, 'a closed ticket still accepted messages');
+
+  const staffView = await api('/api/admin/support/tickets?status=closed');
+  assert.equal(staffView.status, 200);
+  assert.ok(staffView.body.tickets.some((ticket) => String(ticket.id) === String(ticketId)));
+});
+
+test('a support ticket cannot be read by another account', async () => {
+  const created = await api('/api/support/tickets', {
+    method: 'POST', body: { subject: 'Vertraulich', body: 'Das geht niemanden sonst etwas an.' },
+  });
+  const ticketId = created.body.id;
+  const owner = session.cookie;
+
+  // A fresh account with no permissions at all.
+  session.cookie = null;
+  const other = await api('/api/auth/register', {
+    method: 'POST',
+    body: { email: 'nosy@example.org', username: 'Neugier', password: 'Treibholz-Anker-77', locale: 'de' },
+  });
+  assert.equal(other.status, 200, JSON.stringify(other.body));
+
+  const peek = await api(`/api/support/tickets/${ticketId}`);
+  assert.equal(peek.status, 403, 'another account could read the ticket');
+  const list = await api('/api/support/tickets');
+  assert.equal(list.body.tickets.length, 0);
+  const staff = await api('/api/admin/support/tickets');
+  assert.equal(staff.status, 403, 'a player reached the staff queue');
+
+  session.cookie = owner;
+});
+
+test('news is only public once it is published', async () => {
+  const created = await api('/api/admin/news', {
+    method: 'POST',
+    body: {
+      slug: 'erste-flotte',
+      title: { de: 'Die erste Flotte', en: 'The first fleet' },
+      body: { de: 'Nachricht auf Deutsch.', en: 'A message in English.' },
+    },
+  });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+
+  const draft = await api('/api/news');
+  assert.equal(draft.body.posts.length, 0, 'an unpublished draft was public');
+
+  const published = await api(`/api/admin/news/${created.body.id}`, {
+    method: 'PATCH', body: { publish: true },
+  });
+  assert.equal(published.status, 200);
+
+  const live = await api('/api/news?locale=de');
+  assert.equal(live.body.posts.length, 1);
+  assert.equal(live.body.posts[0].title, 'Die erste Flotte');
+
+  const english = await api('/api/news?locale=en');
+  assert.equal(english.body.posts[0].title, 'The first fleet');
+
+  // Tirolerisch has no text of its own, so it falls back rather than break.
+  const tirol = await api('/api/news?locale=de-tirol');
+  assert.equal(tirol.body.posts[0].title, 'Die erste Flotte');
+});
+
+test('an advert is reviewed before anyone sees it', async () => {
+  const bad = await api('/api/ads', {
+    method: 'POST',
+    body: { title: 'Boot zu verkaufen', body: 'Ein sehr gutes Boot, kaum benutzt.', targetUrl: 'javascript:alert(1)' },
+  });
+  assert.equal(bad.status, 400, 'a javascript: URL was accepted');
+
+  const created = await api('/api/ads', {
+    method: 'POST',
+    body: { title: 'Boot zu verkaufen', body: 'Ein sehr gutes Boot, kaum benutzt.', targetUrl: 'https://example.org/boot' },
+  });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+
+  const beforeReview = await api('/api/ads');
+  assert.equal(beforeReview.body.ads.length, 0, 'an unreviewed advert was served');
+
+  const approved = await api(`/api/admin/ads/${created.body.id}`, {
+    method: 'POST', body: { status: 'approved', note: 'in Ordnung' },
+  });
+  assert.equal(approved.status, 200);
+
+  const served = await api('/api/ads');
+  assert.equal(served.body.ads.length, 1);
+  assert.equal(served.body.ads[0].targetUrl, 'https://example.org/boot');
+
+  const click = await api(`/api/ads/${created.body.id}/click`, { method: 'POST' });
+  assert.equal(click.status, 200);
+
+  const queue = await api('/api/admin/ads?status=approved');
+  const row = queue.body.ads.find((ad) => String(ad.id) === String(created.body.id));
+  assert.equal(row.impressions, 1, `impressions were not counted: ${row.impressions}`);
+  assert.equal(row.clicks, 1);
+});
+
 test('the simulation is actually running', async () => {
   const status = await api(`/api/worlds/${worldId}/status`);
   assert.equal(status.body.loaded, true);

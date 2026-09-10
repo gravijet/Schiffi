@@ -273,6 +273,9 @@ function wireSocket() {
         state.game.updateTopbar();
         state.game.renderShipPanel();
         state.game.renderActionbar();
+        // Docking state decides what the right-hand panel may show at all;
+        // without this it kept offering a market after the ship had sailed.
+        state.game.refreshPort();
         break;
       case 'disease':
         toast(`${message.crewName}: ${t('crew.sick')} (${message.disease})`, 'warn');
@@ -428,6 +431,7 @@ function loop(now) {
   if (!drew) return;
 
   drawMinimap();
+  state.game.updateAshoreButton();
   state.game.updatePerf();
 
   // Tell the server what we can see, so it only sends that.

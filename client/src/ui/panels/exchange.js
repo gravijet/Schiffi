@@ -33,7 +33,7 @@ export function exchangeView(ctx) {
   add(root,
     h('div.row', null,
       h('button.primary', { onClick: () => listDialog(ctx, refresh) }, t('market.createListing')),
-      h('button.ghost', { onClick: () => refresh() }, t('common.retry'))),
+      h('button.ghost', { onClick: () => refresh() }, t('common.refresh'))),
     header, pane);
 
   async function refresh() {

@@ -21,9 +21,11 @@ import { generateIslandName } from '@schiffi/shared/world/names.js';
 import { addCargo, cargoUsage } from './characters.js';
 import { audit } from '../services/audit.js';
 import { awardXp } from './progression.js';
+import { LANDING_RANGE } from '@schiffi/shared/data/costs.js';
 
-/** How close the ship must be to a landing beach. */
-const LANDING_RANGE = CELL_SIZE * 4;
+// Shared with the client, which greys out the landing button at the same
+// distance rather than letting the player press it and be told no.
+export { LANDING_RANGE };
 /** Cooldown per activity per island, so an island is not an infinite mine. */
 const ACTIVITY_COOLDOWN_MS = 6 * 60_000;
 
@@ -96,6 +98,13 @@ export async function land({ instance, characterId, userId }) {
       await audit({ userId: character.user_id }, 'explore.first_discovery', 'island',
         `${instance.id}:${island.id}`, { player: character.name }, { db: tx });
     }
+
+    // Every island you have set foot on goes into the album, first or not:
+    // the shelf is a log of where you have been, not only of what you claimed.
+    await recordAlbum(tx, characterId, 'island', String(island.id), {
+      name: discovery?.final_name ?? discovery?.proposed_name ?? island.name ?? null,
+      first: firstDiscovery,
+    });
 
     // Charting an island is worth experience whether or not you were first.
     const xp = firstDiscovery ? 400 : 25;

@@ -79,11 +79,19 @@ export function combatView(ctx) {
         : null,
       h('div.row', null,
         h(`button.tab${aim === 'hull' ? '.is-active' : ''}`,
-          { onClick: () => { aim = 'hull'; renderStatus(); } }, t('combat.hullDamage')),
+          { onClick: () => { aim = 'hull'; renderStatus(); } }, t('combat.aimHull')),
         h(`button.tab${aim === 'sails' ? '.is-active' : ''}`,
-          { onClick: () => { aim = 'sails'; renderStatus(); } }, t('combat.sailDamage'))),
-      h('div.row', null,
-        h('button.ghost', { onClick: () => armDialog(ctx, render) }, t('combat.arm'))));
+          { onClick: () => { aim = 'sails'; renderStatus(); } }, t('combat.aimSails'))),
+      // Guns are bought at a shipyard, which the server insists on too, so at
+      // sea the button says why instead of failing when pressed.
+      slots === 0
+        ? h('p.small.muted', null, t('combat.noGunPorts'))
+        : h('div.row', null,
+          h('button.ghost', {
+            disabled: !ctx.character?.docked,
+            onClick: () => armDialog(ctx, render),
+          }, t('combat.arm')),
+          ctx.character?.docked ? null : h('span.small.muted', null, t('combat.armInPort'))));
   }
 
   async function act(name, payload, onDone) {

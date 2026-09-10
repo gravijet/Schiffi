@@ -34,9 +34,35 @@ export function countdown(ms) {
   return `${Math.floor(hours / 24)} ${t('unit.days')} ${hours % 24} ${t('unit.hours')}`;
 }
 
+const COMPASS = ['e', 'se', 's', 'sw', 'w', 'nw', 'n', 'ne'];
+
+/**
+ * Where a search area lies, said the way a sailor would.
+ *
+ * Raw world coordinates mean nothing to a player looking at a map, so a
+ * contract that sends you somewhere says how far and in which direction from
+ * where the ship is now.
+ */
+function heading(fromX, fromY, toX, toY) {
+  const dx = toX - fromX;
+  const dy = toY - fromY;
+  // Screen y grows downwards, so a positive dy is southward.
+  const octant = Math.round(Math.atan2(dy, dx) / (Math.PI / 4));
+  return {
+    bearing: t(`bearing.${COMPASS[((octant % 8) + 8) % 8]}`),
+    distance: `${Math.round(Math.hypot(dx, dy) / 100) / 10} km`,
+  };
+}
+
 /** One line describing what a contract asks for, per type. */
-function requirement(mission) {
+function requirement(mission, self) {
   const data = mission.data ?? {};
+  const area = (x, y) => {
+    if (!self) return '';
+    const { bearing, distance } = heading(self.x, self.y, x, y);
+    return t('mission.searchArea', { bearing, distance });
+  };
+
   switch (mission.type) {
     case 'delivery':
     case 'supply':
@@ -47,9 +73,9 @@ function requirement(mission) {
     case 'escort':
       return `→ ${data.toPortName}`;
     case 'exploration':
-      return `${t('explore.title')} · ${Math.round(data.hintX)} / ${Math.round(data.hintY)} ±${data.radius}`;
+      return `${t('explore.undiscovered')} · ${area(data.hintX, data.hintY)}`;
     case 'salvage':
-      return `${t('combat.salvage')} · ${Math.round(data.x)} / ${Math.round(data.y)}`;
+      return `${t('cartography.wrecks')} · ${area(data.x, data.y)}`;
     case 'bounty':
       return `${data.kills}× ${t('mission.types.bounty')}`;
     default:
@@ -73,7 +99,7 @@ function readyToComplete(mission, character) {
   return Boolean(data.toPortId);
 }
 
-function missionCard(mission, { character, onAccept, onAbandon, onComplete }) {
+function missionCard(mission, { character, self, onAccept, onAbandon, onComplete }) {
   const deadline = remaining(mission.deadline);
   const ready = onComplete ? readyToComplete(mission, character) : false;
 
@@ -82,7 +108,7 @@ function missionCard(mission, { character, onAccept, onAbandon, onComplete }) {
       h('div.grow', null,
         h('div', null, t(`mission.types.${mission.type}`),
           mission.data?.risk ? h('span.bad.small', null, ' ⚑') : null),
-        h('div.small.muted', null, requirement(mission))),
+        h('div.small.muted', null, requirement(mission, self))),
       h('div.right', null,
         h('div.mono', null, tc(mission.reward)),
         deadline ? h('div.small.muted', null, deadline) : null)),
@@ -145,6 +171,7 @@ export function missionsView(ctx) {
         for (const mission of missions) {
           list.append(missionCard(mission, {
             character,
+            self: ctx.socket.self,
             onAccept: (m) => act('mission.accept', { missionId: m.id }, 'mission.accepted'),
           }));
         }
@@ -158,6 +185,7 @@ export function missionsView(ctx) {
         for (const mission of missions) {
           list.append(missionCard(mission, {
             character,
+            self: ctx.socket.self,
             onComplete: (m) => act('mission.complete', { missionId: m.id }, 'mission.completed'),
             onAbandon: async (m) => {
               const yes = await confirmDialog({

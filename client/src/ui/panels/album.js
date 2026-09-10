@@ -14,8 +14,9 @@ import { currentLocale } from '../../state/i18n.js';
 const date = (ms) => new Date(ms).toLocaleDateString(currentLocale());
 
 /** How an album entry is named, which depends on what kind of thing it is. */
-function entryLabel(kind, key) {
+function entryLabel(kind, key, entry) {
   if (kind === 'animal') return t(`wildlife.${key}`);
+  if (kind === 'island') return entry?.data?.name ?? t('explore.undiscovered');
   const good = goodByKey(key);
   if (good) return good.names[currentLocale()] ?? good.names.en;
   return key;
@@ -77,17 +78,21 @@ function albumBody(album, reference) {
     anything += found.size;
     const all = expected[kind] ?? [...found.keys()];
 
+    // Islands are open-ended - the world holds hundreds - so that shelf shows
+    // a running count rather than a fraction of a set that has no end.
+    const closed = Boolean(expected[kind]);
     add(root,
       h('div.row.row--between', null,
         h('div.card__title', null, t(`albumKind.${kind}`)),
-        h('span.small.muted', null,
-          t('explore.albumProgress', { found: found.size, total: all.length }))));
+        h('span.small.muted', null, closed
+          ? t('explore.albumProgress', { found: found.size, total: all.length })
+          : String(found.size))));
 
     const grid = h('div.album-grid');
     for (const key of all) {
       const entry = found.get(key);
       grid.append(h(`div.album-cell${entry ? '.is-found' : ''}`, null,
-        h('div.album-cell__name', null, entryLabel(kind, key)),
+        h('div.album-cell__name', null, entryLabel(kind, key, entry)),
         h('div.small.muted', null, entry ? date(entry.at) : '—')));
     }
     root.append(grid);
