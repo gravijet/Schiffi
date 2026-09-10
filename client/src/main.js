@@ -105,10 +105,15 @@ async function main() {
 
   progress(1, '');
   boot?.remove();
-  showMobileNotice();
 
-  // 4. The advert in front of the site, if the operator has put one there.
-  if (promo) await showInterstitial(promo);
+  // 4. A deliberate first click before anything else. Its only functional
+  // purpose is the advert below - a browser only ever allows a video to
+  // start with sound in direct response to a real user gesture, never on a
+  // timer - but it is also just a better first impression than materialising
+  // straight into a menu. It covers the whole screen, so nothing else is
+  // shown underneath it yet.
+  await showStartGate(promo);
+  showMobileNotice();
 
   // 5. First visit: ask which language, now that there is nothing on top of
   // the dialog. A returning visitor never sees this.
@@ -172,14 +177,67 @@ async function fetchInterstitial() {
 }
 
 /**
+ * The first thing a visitor can act on, and resolve once they have.
+ *
+ * A click here is spent immediately: if the operator's advert is a video, it
+ * starts playing with sound in the very same call stack as the click, which
+ * is the one condition every browser actually honours for unmuted autoplay.
+ * Wait past this point - even a microtask - and the browser no longer
+ * considers it a gesture at all, and the video falls silently back to muted.
+ */
+function showStartGate(promo) {
+  return new Promise((resolve) => {
+    const particles = h('div.start-gate__particles', { 'aria-hidden': 'true' },
+      ...Array.from({ length: 18 }, (_, i) => h('span', {
+        style: {
+          left: `${(i * 137.5) % 100}%`,
+          animationDuration: `${7 + (i % 5) * 2}s`,
+          animationDelay: `${-(i * 1.3) % 12}s`,
+        },
+      })));
+
+    const spokes = Array.from({ length: 8 }, (_, i) =>
+      h('div.start-gate__spoke', { style: { transform: `rotate(${i * 45}deg)` } }));
+
+    const enter = () => {
+      gate.classList.add('start-gate--leaving');
+      const done = promo ? showInterstitial(promo, { unmuted: Boolean(promo.video) }) : Promise.resolve();
+      gate.addEventListener('transitionend', () => gate.remove(), { once: true });
+      done.then(resolve);
+    };
+
+    const startBtn = h('button.start-gate__btn', { onClick: enter }, t('app.start'));
+
+    const gate = h('div.start-gate', { role: 'dialog', 'aria-label': t('app.start') },
+      h('div.start-gate__waves', { 'aria-hidden': 'true' },
+        h('div.start-gate__wave'), h('div.start-gate__wave'), h('div.start-gate__wave')),
+      particles,
+      h('div.start-gate__center', null,
+        h('div.start-gate__wheel', { 'aria-hidden': 'true' },
+          ...spokes,
+          h('span.start-gate__mark', null, '⚓')),
+        h('div.start-gate__title', null, t('app.name')),
+        h('div.start-gate__tagline', null, t('app.tagline')),
+        startBtn));
+
+    document.body.append(gate);
+    startBtn.focus();
+  });
+}
+
+/**
  * Show it, and resolve when the visitor moves on.
  *
  * The continue button is disabled for the configured number of seconds and
  * counts down visibly, so the wait is stated rather than merely imposed. Zero
  * seconds means it can be dismissed at once. Escape works throughout: an
  * advert that can trap somebody on the page is not one this site will serve.
+ *
+ * `unmuted` is only ever passed true from directly inside the start gate's
+ * click handler - see showStartGate above for why that is the only place it
+ * can safely be true.
  */
-function showInterstitial(promo) {
+function showInterstitial(promo, { unmuted = false } = {}) {
   return new Promise((resolve) => {
     const skip = h('button.primary', { disabled: promo.seconds > 0 });
     let left = Math.max(0, Number(promo.seconds) || 0);
@@ -207,12 +265,13 @@ function showInterstitial(promo) {
       window.open(promo.targetUrl, '_blank', 'noopener,noreferrer');
     };
 
+    let video = null;
     const card = h('div.promo__card', null,
       promo.video
-        ? h('video.promo__image', {
-          src: promo.video, controls: true, autoplay: true, muted: true, playsInline: true,
+        ? (video = h('video.promo__image', {
+          src: promo.video, controls: true, autoplay: true, muted: !unmuted, playsInline: true,
           onClick: (event) => event.stopPropagation(),
-        })
+        }))
         : promo.image
         ? h('img.promo__image', {
           src: promo.image, alt: promo.headline,
@@ -230,6 +289,14 @@ function showInterstitial(promo) {
     const layer = h('div.promo', { role: 'dialog', 'aria-modal': 'true' }, card);
     document.addEventListener('keydown', onKey);
     document.body.append(layer);
+    // A muted <video autoplay> always starts on its own; an unmuted one needs
+    // an explicit play() spent from the still-live click that opened this
+    // dialog. If the browser refuses it anyway (gesture already too old, or a
+    // policy stricter than expected), fall back to muted rather than leaving
+    // a paused black rectangle behind.
+    if (video && unmuted) {
+      video.play().catch(() => { video.muted = true; video.play().catch(() => {}); });
+    }
     skip.focus();
   });
 }

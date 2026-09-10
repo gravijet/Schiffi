@@ -7,6 +7,7 @@ export default {
     factLanguages: 'Lingue',
     factOnline: 'A bordo ora',
     mobileNotice: 'Schiffi funziona anche sul telefono, ma si gioca molto meglio su PC con tastiera e schermo grande.',
+    start: 'Inizia',
   },
   common: { ok: 'OK', cancel: 'Annulla', yes: 'Sì', no: 'No', close: 'Chiudi', save: 'Salva',
     delete: 'Elimina', edit: 'Modifica', back: 'Indietro', next: 'Avanti', confirm: 'Conferma',

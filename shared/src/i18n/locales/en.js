@@ -11,6 +11,7 @@ export default {
     factLanguages: 'Languages',
     factOnline: 'Aboard right now',
     mobileNotice: 'Schiffi runs on a phone too, but it plays a lot better on a PC with a keyboard and a bigger screen.',
+    start: 'Start',
   },
   common: {
     ok: 'OK', cancel: 'Cancel', yes: 'Yes', no: 'No', close: 'Close',

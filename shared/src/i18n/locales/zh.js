@@ -6,6 +6,7 @@ export default {
     factLanguages: '语言',
     factOnline: '当前在线',
     mobileNotice: 'Schiffi 也能在手机上运行，但在电脑上用键盘和大屏幕体验会好得多。',
+    start: '开始',
   },
   common: { ok: '确定', cancel: '取消', yes: '是', no: '否', close: '关闭', save: '保存',
     delete: '删除', edit: '编辑', back: '返回', next: '下一步', confirm: '确认', search: '搜索',

@@ -69,8 +69,23 @@ after(async () => {
   rmSync(TEST_DIR, { recursive: true, force: true });
 });
 
+/**
+ * Every fresh load of the main bundle now opens behind a "press start" gate -
+ * a real click is what lets an interstitial video play with sound, and it
+ * covers the whole screen, so nothing underneath it (language picker, mobile
+ * notice, menu) is reachable until it is dismissed the way a visitor would.
+ * The console bundle at /superadmin never goes through main.js and has no
+ * gate, so callers there skip this.
+ */
+async function clickStart(pg) {
+  await pg.waitForSelector('.start-gate__btn', { timeout: 30_000 });
+  await pg.locator('.start-gate__btn').click();
+  await pg.waitForSelector('.start-gate', { state: 'detached', timeout: 10_000 });
+}
+
 test('the client boots and offers all nine language variants', async () => {
   await page.goto(base, { waitUntil: 'domcontentloaded' });
+  await clickStart(page);
   await page.waitForSelector('.lang-grid', { timeout: 30_000 });
   assert.equal(await page.locator('.lang-btn').count(), 9);
 });
@@ -99,6 +114,7 @@ test('guest play signs in with a generated nickname', async () => {
   const guest = await context.newPage();
   try {
     await guest.goto(base, { waitUntil: 'domcontentloaded' });
+    await clickStart(guest);
     await guest.waitForSelector('.lang-grid', { timeout: 30_000 });
     await guest.locator('.lang-btn', { hasText: 'Deutsch' }).first().click();
     await guest.locator('.site-nav__link', { hasText: 'Spielen' }).first().click();
@@ -140,15 +156,18 @@ test('each screen has its own address, and the address works on its own', async 
 
   const direct = await page.context().newPage();
   await direct.goto(`${base}/support`, { waitUntil: 'domcontentloaded' });
+  await clickStart(direct);
   await direct.waitForSelector('.site-main h2', { timeout: 20_000 });
   assert.equal((await direct.locator('.site-main h2').innerText()).trim(), 'Support');
 
   await direct.goto(`${base}/gibt-es-nicht`, { waitUntil: 'domcontentloaded' });
+  await clickStart(direct);
   await direct.waitForSelector('.site-main h2', { timeout: 20_000 });
   assert.equal((await direct.locator('.site-main h2').innerText()).trim(), '404');
   await direct.close();
 
   await page.goto(base, { waitUntil: 'domcontentloaded' });
+  await clickStart(page);
   await page.waitForSelector('.site-nav', { timeout: 20_000 });
 });
 
@@ -172,6 +191,7 @@ test('nothing the site ships mentions the superadmin console', async () => {
 
   const attempt = await page.context().newPage();
   await attempt.goto(`${base}/superadmin`, { waitUntil: 'domcontentloaded' });
+  await clickStart(attempt);
   await attempt.waitForSelector('.site-main h2', { timeout: 20_000 });
   assert.equal((await attempt.locator('.site-main h2').innerText()).trim(), '404',
     '/superadmin gave a different answer than an invented path');
@@ -183,6 +203,7 @@ test('a touch visitor is told to prefer a PC, a mouse visitor is not', async () 
   const phone = await browser.newContext({ ...devices['Pixel 7'] });
   const phonePage = await phone.newPage();
   await phonePage.goto(base, { waitUntil: 'domcontentloaded' });
+  await clickStart(phonePage);
   await phonePage.waitForSelector('.mobile-notice', { timeout: 20_000 });
   assert.match(await phonePage.locator('.mobile-notice').innerText(), /PC/);
 
@@ -198,6 +219,7 @@ test('a touch visitor is told to prefer a PC, a mouse visitor is not', async () 
   await phonePage.locator('.mobile-notice .icon-btn').click();
   await phonePage.waitForSelector('.mobile-notice', { state: 'detached', timeout: 5_000 });
   await phonePage.reload({ waitUntil: 'domcontentloaded' });
+  await clickStart(phonePage);
   await phonePage.waitForTimeout(1000);
   assert.equal(await phonePage.locator('.mobile-notice').count(), 0,
     'dismissing the notice did not survive a reload of the same tab');
@@ -207,6 +229,7 @@ test('a touch visitor is told to prefer a PC, a mouse visitor is not', async () 
   const secondVisit = await browser.newContext({ ...devices['Pixel 7'] });
   const secondPage = await secondVisit.newPage();
   await secondPage.goto(base, { waitUntil: 'domcontentloaded' });
+  await clickStart(secondPage);
   await secondPage.waitForSelector('.mobile-notice', { timeout: 20_000 });
   await secondVisit.close();
 
@@ -300,6 +323,7 @@ test('settings survive a reload, and the language picker does not come back', as
   const fresh = await context.newPage();
   try {
     await fresh.goto(base, { waitUntil: 'domcontentloaded' });
+    await clickStart(fresh);
     await fresh.locator('.lang-btn').first().click();
     await fresh.waitForSelector('.site-nav', { timeout: 20_000 });
 
@@ -315,6 +339,7 @@ test('settings survive a reload, and the language picker does not come back', as
     assert.ok(before.autoDetected, 'the fixture is wrong: autoDetected was never filled in');
 
     await fresh.reload({ waitUntil: 'domcontentloaded' });
+    await clickStart(fresh);
     await fresh.waitForSelector('.site-nav', { timeout: 20_000 });
 
     assert.equal(await fresh.locator('.lang-grid').count(), 0,
@@ -346,6 +371,7 @@ test('the full new game dialog still opens and validates', async () => {
   const fresh = await context.newPage();
   try {
     await fresh.goto(base, { waitUntil: 'domcontentloaded' });
+    await clickStart(fresh);
     await fresh.locator('.lang-btn').first().click();
     await fresh.waitForSelector('.site-nav', { timeout: 20_000 });
 
@@ -661,6 +687,7 @@ test('the offline cache registers and keeps the terrain, never the API', async (
   // A reload has to come back through the worker, and the terrain blob has to
   // be in its cache; the API must not be.
   await page.reload({ waitUntil: 'domcontentloaded' });
+  await clickStart(page);
   await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller), { timeout: 15_000 });
 
   const cached = await page.evaluate(async () => {
@@ -703,6 +730,7 @@ test('the superadmin console reads a password and puts an advert in front of the
   // Sign in as the superadmin the way a person would.
   const signIn = await console_.newPage();
   await signIn.goto(base, { waitUntil: 'domcontentloaded' });
+  await clickStart(signIn);
   await signIn.waitForSelector('.lang-grid', { timeout: 30_000 });
   await signIn.locator('.lang-btn', { hasText: 'Deutsch' }).first().click();
   await signIn.waitForSelector('.site-nav', { timeout: 20_000 });
@@ -745,10 +773,13 @@ test('the superadmin console reads a password and puts an advert in front of the
   await cx.locator('button', { hasText: 'Anzeigen' }).first().click();
   await cx.waitForSelector('.cx-card.is-active', { timeout: 10_000 });
 
-  // A visitor who has never been here meets the advert before the site.
+  // A visitor who has never been here meets the advert before the site, right
+  // after the press-start gate - the same click that lets the advert's own
+  // video (if it had one) play with sound rather than silently.
   const visitorContext = await browser.newContext();
   const visitor = await visitorContext.newPage();
   await visitor.goto(base, { waitUntil: 'domcontentloaded' });
+  await clickStart(visitor);
   await visitor.waitForSelector('.promo__headline', { timeout: 30_000 });
   assert.equal((await visitor.locator('.promo__headline').innerText()).trim(), 'Hafenfest im Nordmeer');
   await visitor.waitForFunction(() => {

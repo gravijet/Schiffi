@@ -7,6 +7,7 @@ export default {
     factLanguages: 'Языков',
     factOnline: 'Сейчас в игре',
     mobileNotice: 'Schiffi работает и на телефоне, но на ПК с клавиатурой и большим экраном играть гораздо удобнее.',
+    start: 'Начать',
   },
   common: { ok: 'ОК', cancel: 'Отмена', yes: 'Да', no: 'Нет', close: 'Закрыть', save: 'Сохранить',
     delete: 'Удалить', edit: 'Изменить', back: 'Назад', next: 'Далее', confirm: 'Подтвердить',

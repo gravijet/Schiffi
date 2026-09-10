@@ -11,6 +11,7 @@ export default {
     factLanguages: 'Sprachen',
     factOnline: 'Gerade an Bord',
     mobileNotice: 'Schiffi läuft auch auf dem Handy, spielt sich aber deutlich besser am PC mit Tastatur und großem Bildschirm.',
+    start: 'Los geht\'s',
   },
   common: {
     ok: 'OK', cancel: 'Abbrechen', yes: 'Ja', no: 'Nein', close: 'Schließen',
