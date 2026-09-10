@@ -94,7 +94,7 @@ export async function land({ instance, characterId, userId }) {
         [Date.now(), characterId]);
       // A first landing lifts the whole crew.
       await tx.run(
-        'UPDATE crew_members SET morale = MIN(100, morale + 20) WHERE ship_id = ?',
+        'UPDATE crew_members SET morale = LEAST(100, morale + 20) WHERE ship_id = ?',
         [character.active_ship_id]);
       await audit({ userId: character.user_id }, 'explore.first_discovery', 'island',
         `${instance.id}:${island.id}`, { player: character.name }, { db: tx });
@@ -276,7 +276,7 @@ export async function gather({ instance, characterId, userId, payload }) {
 
     const cost = ACTIVITY_COST[activity];
     if (cost?.morale) {
-      await tx.run('UPDATE crew_members SET morale = MAX(0, MIN(100, morale + ?)) WHERE ship_id = ?',
+      await tx.run('UPDATE crew_members SET morale = GREATEST(0, LEAST(100, morale + ?)) WHERE ship_id = ?',
         [cost.morale, ship.id]);
     }
     await tx.insert('discovery_album', {

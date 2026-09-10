@@ -15,7 +15,17 @@ export const ROOT = resolve(here, '../..');
 
 function loadDotEnv(file) {
   if (!existsSync(file)) return;
-  for (const rawLine of readFileSync(file, 'utf8').split('\n')) {
+  let contents;
+  try {
+    contents = readFileSync(file, 'utf8');
+  } catch (error) {
+    // In production the environment comes from the service manager and the
+    // developer's .env is deliberately unreadable to the service account.
+    // That is not an error worth refusing to boot over.
+    console.warn(`[config] ${file} exists but could not be read (${error.code}) - ignoring it`);
+    return;
+  }
+  for (const rawLine of contents.split('\n')) {
     const line = rawLine.trim();
     if (!line || line.startsWith('#')) continue;
     const eq = line.indexOf('=');
@@ -70,7 +80,7 @@ export const config = {
     user: process.env.SMTP_USER || '',
     pass: process.env.SMTP_PASS || '',
     from: process.env.MAIL_FROM || 'Schiffi <no-reply@localhost>',
-    spoolDir: resolve(ROOT, 'data/mail'),
+    spoolDir: resolve(ROOT, process.env.MAIL_SPOOL_DIR || 'data/mail'),
   },
 
   cloudflare: {
@@ -93,7 +103,9 @@ export const config = {
   },
 
   uploads: {
-    dir: resolve(ROOT, 'data/uploads'),
+    // Absolute paths win over ROOT, so a test or a packaged install can put
+    // the writable directories somewhere else entirely.
+    dir: resolve(ROOT, process.env.UPLOADS_DIR || 'data/uploads'),
     maxAvatarBytes: num(process.env.MAX_AVATAR_BYTES, 512 * 1024),
   },
 };

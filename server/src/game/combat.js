@@ -115,7 +115,7 @@ export async function fire({ instance, characterId, userId, payload, gateway }) 
   target.sail = Math.max(0, (target.sail ?? 0) - sailDamage);
 
   attacker.reloadedAt = now + RELOAD_MS;
-  await db.run('UPDATE ships SET ammunition = MAX(0, ammunition - 1) WHERE id = ?', [ship.id]);
+  await db.run('UPDATE ships SET ammunition = GREATEST(0, ammunition - 1) WHERE id = ?', [ship.id]);
 
   // Both sides are told, so a victim can react rather than just die.
   if (target.send) {
@@ -180,7 +180,7 @@ async function sinkTarget({ instance, attacker, target, gateway, userId }) {
       await tx.run(
         'UPDATE player_stats SET battles_lost = battles_lost + 1, updated_at = ? WHERE character_id = ?',
         [Date.now(), target.characterId]);
-      await tx.run('UPDATE crew_members SET morale = MAX(0, morale - 25) WHERE ship_id = ?', [target.shipId]);
+      await tx.run('UPDATE crew_members SET morale = GREATEST(0, morale - 25) WHERE ship_id = ?', [target.shipId]);
     });
     target.hull = Math.max(10, target.maxHull * 0.3);
     target.x = start.x;
@@ -196,7 +196,7 @@ async function sinkTarget({ instance, attacker, target, gateway, userId }) {
       'UPDATE player_stats SET battles_won = battles_won + 1, updated_at = ? WHERE character_id = ?',
       [Date.now(), attacker.characterId]);
     await awardXp(tx, attacker.characterId, isPlayer ? 250 : 120);
-    await tx.run('UPDATE crew_members SET morale = MIN(100, morale + 12) WHERE ship_id = ?',
+    await tx.run('UPDATE crew_members SET morale = LEAST(100, morale + 12) WHERE ship_id = ?',
       [attacker.shipId]);
   });
 
@@ -334,8 +334,8 @@ export async function board({ instance, characterId, userId, payload, gateway })
     // The boarding party can be beaten off; guards make that unlikely.
     const success = Math.random() < clamp01(0.45 + guards * 0.12 + crew.length * 0.02);
     if (!success) {
-      await tx.run('UPDATE crew_members SET health = MAX(1, health - 18) WHERE ship_id = ?', [ship.id]);
-      await tx.run('UPDATE crew_members SET morale = MAX(0, morale - 10) WHERE ship_id = ?', [ship.id]);
+      await tx.run('UPDATE crew_members SET health = GREATEST(1, health - 18) WHERE ship_id = ?', [ship.id]);
+      await tx.run('UPDATE crew_members SET morale = GREATEST(0, morale - 10) WHERE ship_id = ?', [ship.id]);
       return { boarded: false, taken: [] };
     }
 
@@ -365,7 +365,7 @@ export async function board({ instance, characterId, userId, payload, gateway })
     }
 
     await awardXp(tx, characterId, 90);
-    await tx.run('UPDATE crew_members SET morale = MIN(100, morale + 8) WHERE ship_id = ?', [ship.id]);
+    await tx.run('UPDATE crew_members SET morale = LEAST(100, morale + 8) WHERE ship_id = ?', [ship.id]);
 
     if (target.send) target.send({ t: 'event', kind: 'boarded', by: attacker.displayName, taken });
     await audit({ userId }, 'combat.board', 'character', String(characterId),

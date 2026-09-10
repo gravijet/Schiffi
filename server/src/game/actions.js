@@ -432,7 +432,7 @@ export async function dismissCrew({ instance, characterId, userId, payload }) {
     if (!member) throw fail('error.notFound');
     await tx.run('DELETE FROM crew_members WHERE id = ?', [member.id]);
     // The rest of the crew notices.
-    await tx.run('UPDATE crew_members SET morale = MAX(0, morale - 4) WHERE ship_id = ?', [ship.id]);
+    await tx.run('UPDATE crew_members SET morale = GREATEST(0, morale - 4) WHERE ship_id = ?', [ship.id]);
     return { crewId: member.id, dismissed: true };
   });
 }
@@ -447,7 +447,7 @@ export async function payWages({ instance, characterId, userId }) {
     if (Number(character.coins) < total) throw fail('trade.notEnoughCoins');
 
     await tx.run('UPDATE characters SET coins = coins - ? WHERE id = ?', [total, characterId]);
-    await tx.run('UPDATE crew_members SET morale = MIN(100, morale + 9) WHERE ship_id = ?', [ship.id]);
+    await tx.run('UPDATE crew_members SET morale = LEAST(100, morale + 9) WHERE ship_id = ?', [ship.id]);
     return { paid: total, coins: Number(character.coins) - total, crewCount: crew.length };
   });
 }

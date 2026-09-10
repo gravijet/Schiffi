@@ -21,7 +21,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createRequire } from 'node:module';
 import config from '../config.js';
-import { toPositional, translateSchema } from './sql.js';
+import { toPositional, translateSchema, translateDml } from './sql.js';
 
 const require = createRequire(import.meta.url);
 
@@ -56,9 +56,11 @@ class SqliteConnection {
   }
 
   prepare(sql) {
+    // Keyed on the original text, so the dialect rewrite happens once per
+    // distinct query rather than on every call.
     let stmt = this.statements.get(sql);
     if (!stmt) {
-      stmt = this.raw.prepare(sql);
+      stmt = this.raw.prepare(translateDml(sql, 'sqlite'));
       this.statements.set(sql, stmt);
     }
     return stmt;
@@ -70,7 +72,7 @@ class SqliteConnection {
     const r = this.prepare(sql).run(...normalise(params));
     return { changes: Number(r.changes), lastId: Number(r.lastInsertRowid) };
   }
-  exec(sql) { this.statements.clear(); this.raw.exec(sql); }
+  exec(sql) { this.statements.clear(); this.raw.exec(translateDml(sql, 'sqlite')); }
   close() { this.statements.clear(); this.raw.close(); }
 }
 
@@ -159,8 +161,36 @@ class SqliteDb {
 // PostgreSQL
 // ---------------------------------------------------------------------------
 
+/**
+ * Which tables have an `id` column.
+ *
+ * `insert()` returns the new row's id, which on PostgreSQL means appending
+ * RETURNING id - but join tables and the migration ledger have no id, and
+ * asking for one there is an error rather than a null.  The catalogue is
+ * asked once per table and cached; inside a transaction the question goes to
+ * that transaction's own client, so a table created moments earlier in the
+ * same migration is already visible.
+ */
+const ID_COLUMN_SQL =
+  `SELECT 1 FROM information_schema.columns
+    WHERE table_schema = ANY (current_schemas(false))
+      AND table_name = $1 AND column_name = 'id'`;
+
+async function hasIdColumn(query, cache, table) {
+  const cached = cache.get(table);
+  if (cached !== undefined) return cached;
+  const { rows } = await query(ID_COLUMN_SQL, [table]);
+  const has = rows.length > 0;
+  cache.set(table, has);
+  return has;
+}
+
 class PostgresHandle {
-  constructor(client) { this.client = client; this.dialect = 'postgres'; }
+  constructor(client, idColumns) {
+    this.client = client;
+    this.dialect = 'postgres';
+    this.idColumns = idColumns;
+  }
   async all(sql, params = []) {
     return (await this.client.query(toPositional(sql), normalise(params))).rows;
   }
@@ -174,9 +204,11 @@ class PostgresHandle {
   }
   async insert(table, values) {
     const keys = Object.keys(values);
+    const returning = await hasIdColumn((sql, params) => this.client.query(sql, params),
+      this.idColumns, table);
     const { rows } = await this.client.query(
-      toPositional(insertSql(table, keys, true)), normalise(keys.map((k) => values[k])));
-    return rows[0]?.id ?? null;
+      toPositional(insertSql(table, keys, returning)), normalise(keys.map((k) => values[k])));
+    return returning ? (rows[0]?.id ?? null) : null;
   }
   async exec(sql) { await this.client.query(sql); }
   async tx(fn) { return fn(this); }
@@ -184,7 +216,11 @@ class PostgresHandle {
 }
 
 class PostgresDb {
-  constructor(pool) { this.pool = pool; this.dialect = 'postgres'; }
+  constructor(pool) {
+    this.pool = pool;
+    this.dialect = 'postgres';
+    this.idColumns = new Map();
+  }
 
   async all(sql, params = []) {
     return (await this.pool.query(toPositional(sql), normalise(params))).rows;
@@ -199,15 +235,17 @@ class PostgresDb {
   }
   async insert(table, values) {
     const keys = Object.keys(values);
+    const returning = await hasIdColumn((sql, params) => this.pool.query(sql, params),
+      this.idColumns, table);
     const { rows } = await this.pool.query(
-      toPositional(insertSql(table, keys, true)), normalise(keys.map((k) => values[k])));
-    return rows[0]?.id ?? null;
+      toPositional(insertSql(table, keys, returning)), normalise(keys.map((k) => values[k])));
+    return returning ? (rows[0]?.id ?? null) : null;
   }
   async exec(sql) { await this.pool.query(sql); }
 
   async tx(fn) {
     const client = await this.pool.connect();
-    const handle = new PostgresHandle(client);
+    const handle = new PostgresHandle(client, this.idColumns);
     try {
       await client.query('BEGIN');
       const result = await fn(handle);
@@ -244,6 +282,19 @@ export async function openDatabase() {
       throw new Error('DATABASE_URL is set but the "pg" package is not installed. ' +
         'Run: npm install pg --workspace=server');
     }
+    // BIGINT arrives as a string by default, because it can exceed the range
+    // JavaScript numbers represent exactly.  Ours cannot: ids come from a
+    // sequence and every timestamp is epoch milliseconds, both far below
+    // 2^53.  Parsing them as numbers keeps the two dialects interchangeable -
+    // otherwise every `id === id` comparison in the game would be a string
+    // against a number, and every timestamp subtraction would be NaN.
+    const types = pg.default?.types ?? pg.types;
+    types.setTypeParser(20, (value) => {
+      const n = Number(value);
+      if (!Number.isSafeInteger(n)) throw new Error(`BIGINT ${value} exceeds safe integer range`);
+      return n;
+    });
+
     const Pool = pg.default?.Pool ?? pg.Pool;
     const pool = new Pool({ connectionString: config.db.url, max: 10, idleTimeoutMillis: 30_000 });
     await pool.query('SELECT 1'); // fail fast on a bad connection string

@@ -11,6 +11,7 @@
   "dependencies": {
     "@node-rs/argon2": "^2.2.0",
     "@schiffi/shared": "*",
+    "pg": "^8.23.0",
     "ws": "^8.21.3"
   }
 }

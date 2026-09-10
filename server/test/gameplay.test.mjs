@@ -9,18 +9,27 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { rmSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { useTestDatabase } from './testdb.mjs';
 
 const ROOT = resolve(import.meta.dirname, '../..');
-const TEST_DB = resolve(ROOT, `data/test-gameplay-${process.pid}.db`);
+// Everything the suite writes lives in one throwaway directory: the
+// repository's own data/ belongs to the running game, not to the tests.
+const TEST_DIR = resolve(tmpdir(), `schiffi-gameplay-${process.pid}`);
+const TEST_DB = resolve(TEST_DIR, 'gameplay.db');
+mkdirSync(TEST_DIR, { recursive: true });
+process.env.UPLOADS_DIR = resolve(TEST_DIR, 'uploads');
+process.env.MAIL_SPOOL_DIR = resolve(TEST_DIR, 'mail');
 
 process.env.NODE_ENV = 'test';
 process.env.PORT = '0';
-process.env.SQLITE_PATH = TEST_DB;
-process.env.DATABASE_URL = '';
 process.env.SESSION_SECRET = 'gameplay-test-'.padEnd(64, 'q');
 process.env.DEFAULT_WORLD_SEED = '13371337';
 process.env.SMTP_HOST = '';
+
+// Empty database, SQLite or PostgreSQL depending on TEST_DATABASE_URL.
+await useTestDatabase(TEST_DB);
 
 let server;
 let db;
@@ -29,8 +38,6 @@ let userId;
 let characterId;
 
 before(async () => {
-  for (const suffix of ['', '-wal', '-shm']) rmSync(`${TEST_DB}${suffix}`, { force: true });
-  mkdirSync(resolve(ROOT, 'data'), { recursive: true });
 
   const { bootstrap } = await import('../src/index.js');
   server = await bootstrap({ listen: false });
@@ -66,7 +73,7 @@ before(async () => {
 
 after(async () => {
   await server?.shutdown();
-  for (const suffix of ['', '-wal', '-shm']) rmSync(`${TEST_DB}${suffix}`, { force: true });
+  rmSync(TEST_DIR, { recursive: true, force: true });
 });
 
 /** Give the character coins through the database, as a fixture would. */

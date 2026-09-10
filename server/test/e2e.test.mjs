@@ -8,22 +8,31 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { rmSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { useTestDatabase } from './testdb.mjs';
 import WebSocket from 'ws';
 
 const ROOT = resolve(import.meta.dirname, '../..');
-const TEST_DB = resolve(ROOT, `data/test-e2e-${process.pid}.db`);
+// Everything the suite writes lives in one throwaway directory: the
+// repository's own data/ belongs to the running game, not to the tests.
+const TEST_DIR = resolve(tmpdir(), `schiffi-e2e-${process.pid}`);
+const TEST_DB = resolve(TEST_DIR, 'e2e.db');
+mkdirSync(TEST_DIR, { recursive: true });
+process.env.UPLOADS_DIR = resolve(TEST_DIR, 'uploads');
+process.env.MAIL_SPOOL_DIR = resolve(TEST_DIR, 'mail');
 // Port 0 lets the OS pick a free port, so a leftover server from an earlier
 // run can never make the suite hang on EADDRINUSE.
 const PORT = 0;
 
 process.env.NODE_ENV = 'test';
 process.env.PORT = String(PORT);
-process.env.SQLITE_PATH = TEST_DB;
-process.env.DATABASE_URL = '';
 process.env.SESSION_SECRET = 'test-secret-'.padEnd(64, 'x');
 process.env.DEFAULT_WORLD_SEED = '424242';
 process.env.SMTP_HOST = '';
+
+// Empty database, SQLite or PostgreSQL depending on TEST_DATABASE_URL.
+await useTestDatabase(TEST_DB);
 process.env.STARTING_COINS = '5';
 
 let BASE;
@@ -32,10 +41,6 @@ let server;
 let session = { cookie: null, token: null };
 
 before(async () => {
-  for (const suffix of ['', '-wal', '-shm']) {
-    rmSync(`${TEST_DB}${suffix}`, { force: true });
-  }
-  mkdirSync(resolve(ROOT, 'data'), { recursive: true });
   const { bootstrap } = await import('../src/index.js');
   server = await bootstrap({ listen: true });
   wsPort = server.http.port;
@@ -44,7 +49,7 @@ before(async () => {
 
 after(async () => {
   await server.shutdown();
-  for (const suffix of ['', '-wal', '-shm']) rmSync(`${TEST_DB}${suffix}`, { force: true });
+  rmSync(TEST_DIR, { recursive: true, force: true });
 });
 
 async function api(path, { method = 'GET', body, raw = false } = {}) {

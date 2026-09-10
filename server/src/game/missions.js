@@ -57,7 +57,9 @@ export async function refreshBoard(instance, port) {
       world_id: instance.id, port_id: port.id, type: mission.type,
       data: JSON.stringify(mission.data), reward: mission.reward,
       reputation: JSON.stringify(mission.reputation ?? {}),
-      deadline: now + mission.ttlMs, status: 'open', created_at: now,
+      // A contract's lifetime scales with the distance it covers, so round it:
+      // every timestamp in the schema is an integer count of milliseconds.
+      deadline: Math.round(now + mission.ttlMs), status: 'open', created_at: now,
     });
     created.push({ id, ...mission });
   }

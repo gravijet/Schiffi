@@ -11,18 +11,27 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { rmSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { useTestDatabase } from '../../server/test/testdb.mjs';
 
 const ROOT = resolve(import.meta.dirname, '../..');
-const TEST_DB = resolve(ROOT, `data/test-browser-${process.pid}.db`);
+// Everything the suite writes lives in one throwaway directory: the
+// repository's own data/ belongs to the running game, not to the tests.
+const TEST_DIR = resolve(tmpdir(), `schiffi-browser-${process.pid}`);
+const TEST_DB = resolve(TEST_DIR, 'browser.db');
+mkdirSync(TEST_DIR, { recursive: true });
+process.env.UPLOADS_DIR = resolve(TEST_DIR, 'uploads');
+process.env.MAIL_SPOOL_DIR = resolve(TEST_DIR, 'mail');
 
 process.env.NODE_ENV = 'test';
 process.env.PORT = '0';
-process.env.SQLITE_PATH = TEST_DB;
-process.env.DATABASE_URL = '';
 process.env.SESSION_SECRET = 'browser-test-'.padEnd(64, 'y');
 process.env.DEFAULT_WORLD_SEED = '20260910';
 process.env.SMTP_HOST = '';
+
+// Empty database, SQLite or PostgreSQL depending on TEST_DATABASE_URL.
+await useTestDatabase(TEST_DB);
 
 let server;
 let browser;
@@ -32,8 +41,6 @@ const consoleErrors = [];
 const consoleWarnings = [];
 
 before(async () => {
-  for (const suffix of ['', '-wal', '-shm']) rmSync(`${TEST_DB}${suffix}`, { force: true });
-  mkdirSync(resolve(ROOT, 'data'), { recursive: true });
 
   const { bootstrap } = await import('../../server/src/index.js');
   server = await bootstrap({ listen: true });
@@ -52,7 +59,7 @@ before(async () => {
 after(async () => {
   await browser?.close();
   await server?.shutdown();
-  for (const suffix of ['', '-wal', '-shm']) rmSync(`${TEST_DB}${suffix}`, { force: true });
+  rmSync(TEST_DIR, { recursive: true, force: true });
 });
 
 test('the client boots and offers all nine language variants', async () => {
