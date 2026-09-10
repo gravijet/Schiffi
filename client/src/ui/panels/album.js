@@ -111,8 +111,13 @@ function achievementBody(data) {
     h('dl.kv', null,
       h('dt', null, t('profile.level')), h('dd', null, String(data.level)),
       h('dt', null, t('profile.xp')), h('dd', null, `${tn(data.xp)} / ${tn(data.nextLevelXp)}`),
+      ...(data.profession
+        ? [h('dt', null, t('profile.profession')), h('dd', null, t(`profession.${data.profession}`))]
+        : []),
       h('dt', null, t('profile.achievements')),
-      h('dd', null, `${unlocked.length} / ${data.achievements.length} · ${tn(points)}`)),
+      h('dd', null,
+        `${unlocked.length} / ${data.achievements.length} · ${t('profile.points', { count: tn(points) })}`)),
+    data.profession ? h('p.small.muted', null, t('profile.professionEarned')) : null,
     bar(data.xp, data.nextLevelXp, { warnAt: 0, badAt: 0 }));
 
   // Nearly-done first: that is the list a player actually acts on.

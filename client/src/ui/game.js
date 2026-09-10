@@ -25,6 +25,7 @@ import { albumView } from './panels/album.js';
 import { Tutorial } from './panels/tutorial.js';
 import { openTradePicker, partnersInHail, onTradeEvent } from './panels/playerTrade.js';
 import { portServicesView } from './panels/warehouse.js';
+import { friendsView } from './panels/friends.js';
 
 export class GameUI {
   constructor({ socket, renderer, onLeave, onRefresh }) {
@@ -169,7 +170,10 @@ export class GameUI {
       const fraction = (this.socket.gameTimeMs % dayMs) / dayMs;
       const hours = Math.floor(fraction * 24);
       const minutes = Math.floor((fraction * 24 - hours) * 60);
-      setValue('stat-time', `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`);
+      const clock = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+      // The part of the day is what actually matters to a captain: sight range
+      // and encounter rates hang off it, so name it beside the clock.
+      setValue('stat-time', `${clock} ${t(`daytime.${partOfDay(hours)}`)}`);
     }
   }
 
@@ -638,6 +642,11 @@ export class GameUI {
       actions: [{ label: t('common.close') }] });
   }
 
+  openFriends() {
+    modal({ title: t('social.friends'), wide: true, body: friendsView(this),
+      actions: [{ label: t('common.close') }] });
+  }
+
   openPortServices() {
     modal({ title: t('port.title'), wide: true, body: portServicesView(this),
       actions: [{ label: t('common.close') }] });
@@ -655,6 +664,7 @@ export class GameUI {
     const dialog = modal({
       title: t('common.more'),
       body: h('div.stack', null,
+        entry('more-friends', t('social.friends'), () => this.openFriends()),
         entry('more-guild', t('guild.title'), () => this.openGuild()),
         entry('more-company', t('company.title'), () => this.openCompany()),
         entry('more-port', t('warehouse.title'), () => this.openPortServices()),
@@ -701,6 +711,14 @@ export class GameUI {
     row(t('perf.netUpdates'), `${(this.socket.bytesIn / 1024).toFixed(0)} KiB`);
     row(t('perf.resolution'), `${this.renderer.canvas.width}×${this.renderer.canvas.height} (${graphics.resolutionScale.toFixed(2)}×)`);
   }
+}
+
+/** Which part of the day an hour falls in. Matches the server's light curve. */
+function partOfDay(hour) {
+  if (hour >= 5 && hour < 8) return 'dawn';
+  if (hour >= 8 && hour < 18) return 'day';
+  if (hour >= 18 && hour < 21) return 'dusk';
+  return 'night';
 }
 
 function highlightMentions(body, ownName) {

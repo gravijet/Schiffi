@@ -10,6 +10,8 @@ import { t, tc } from '../../state/i18n.js';
 import { api } from '../../net/api.js';
 import { countdown } from './missions.js';
 import { goodById } from '@schiffi/shared/data/goods.js';
+import { WAREHOUSE_BASE_CAPACITY, WAREHOUSE_DEPOSIT, warehouseRent }
+  from '@schiffi/shared/data/costs.js';
 import { currentLocale } from '../../state/i18n.js';
 
 const goodName = (goodId) => {
@@ -68,12 +70,20 @@ async function warehousePane(ctx, character, act, refresh) {
   }
 
   if (!here) {
+    // Say what it costs before it is pressed, not after it is refused.
     add(root,
       h('p.small.muted', null, t('warehouse.none')),
+      h('dl.kv', null,
+        h('dt', null, t('warehouse.capacity')), h('dd', null, String(WAREHOUSE_BASE_CAPACITY)),
+        h('dt', null, t('warehouse.deposit')), h('dd', null, tc(WAREHOUSE_DEPOSIT)),
+        h('dt', null, t('warehouse.rentPerDay')),
+        h('dd', null, tc(warehouseRent(WAREHOUSE_BASE_CAPACITY)))),
       h('p.small.muted', null, t('warehouse.arrears')),
       h('button.primary', {
-        onClick: () => act('warehouse.rent', { capacity: 100 }, 'warehouse.rented', refresh),
-      }, t('warehouse.rent')));
+        disabled: (ctx.character?.coins ?? 0) < WAREHOUSE_DEPOSIT,
+        onClick: () => act('warehouse.rent', { capacity: WAREHOUSE_BASE_CAPACITY },
+          'warehouse.rented', refresh),
+      }, `${t('warehouse.rent')} · ${tc(WAREHOUSE_DEPOSIT)}`));
     return root;
   }
 

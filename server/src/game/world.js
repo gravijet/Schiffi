@@ -15,6 +15,8 @@ import { dist } from '@schiffi/shared/util/math.js';
 import { goodById, allGoods } from '@schiffi/shared/data/goods.js';
 import { FACTIONS, baseRelation } from '@schiffi/shared/data/factions.js';
 import { CELL_SIZE } from '@schiffi/shared/world/constants.js';
+import { WAREHOUSE_BASE_CAPACITY, WAREHOUSE_DEPOSIT, warehouseRent }
+  from '@schiffi/shared/data/costs.js';
 import { addCargo, removeCargo, cargoUsage } from './characters.js';
 import { awardXp } from './progression.js';
 import { audit } from '../services/audit.js';
@@ -25,14 +27,9 @@ const fail = (code, message = code) => new HttpError(400, code, message);
 // warehouses
 // ---------------------------------------------------------------------------
 
-/** What a warehouse of a given size costs per game day, and to rent at all. */
-export const WAREHOUSE_BASE_CAPACITY = 100;
-export const WAREHOUSE_RENT_PER_SLOT = 0.4;
-export const WAREHOUSE_DEPOSIT = 1200;
-
-export function warehouseRent(capacity) {
-  return Math.max(1, Math.round(capacity * WAREHOUSE_RENT_PER_SLOT));
-}
+// Rent and deposit are shared with the client, so the button can name the
+// price it is about to charge.
+export { WAREHOUSE_BASE_CAPACITY, WAREHOUSE_DEPOSIT, warehouseRent };
 
 /** Rent storage in the port the ship is lying in. */
 export async function rentWarehouse({ instance, characterId, userId, payload }) {

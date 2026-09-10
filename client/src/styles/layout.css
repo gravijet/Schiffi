@@ -175,10 +175,12 @@
 
 /* --- tutorial ------------------------------------------------------------- */
 
-/* Sits over the map on the left, above the ship panel, and never takes the
-   pointer away from the chart underneath except on its own controls. */
+/* The top-centre strip is the only place on the chart that no dock claims:
+   the ship panel is left, the port panel right, chat and the action bar below.
+   Putting the checklist anywhere else buried one of them. */
 #tutorial {
-  position: fixed; left: 12px; top: 56px; width: 290px; max-width: calc(100vw - 24px);
+  position: fixed; top: 46px; left: 50%; transform: translateX(-50%);
+  width: 380px; max-width: calc(100vw - 16px);
   z-index: 40; border: 1px solid var(--panel-border); border-radius: var(--radius);
   background: var(--panel-bg); backdrop-filter: blur(6px);
   padding: 10px 12px; font-size: 12px;
@@ -200,7 +202,7 @@
 /* On a narrow screen the ship panel becomes a drawer, so the checklist moves
    to the top and shrinks rather than covering the map. */
 @media (max-width: 860px) {
-  #tutorial { left: 8px; right: 8px; width: auto; top: 50px; }
+  #tutorial { left: 8px; right: 8px; width: auto; transform: none; top: 50px; }
   .tutorial__step:not(.is-current):not(.is-done) { display: none; }
 }
 

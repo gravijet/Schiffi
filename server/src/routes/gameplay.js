@@ -70,12 +70,15 @@ export function registerGameplayRoutes(router, { gateway }) {
   router.get('/api/characters/:id/achievements', async (ctx) => {
     await assertOwnership(ctx, ctx.params.id);
     const db = getDatabase();
-    const row = await db.get('SELECT user_id, xp, level FROM characters WHERE id = ?', [ctx.params.id]);
+    const row = await db.get(
+      'SELECT user_id, xp, level, profession FROM characters WHERE id = ?', [ctx.params.id]);
     return {
       achievements: await achievementsFor(row.user_id),
       level: Number(row.level),
       xp: Number(row.xp),
       nextLevelXp: xpForLevel(Number(row.level) + 1),
+      // Chosen by the server from what this character has actually done.
+      profession: row.profession ?? null,
     };
   });
 
