@@ -61,7 +61,7 @@ export function companyView(ctx) {
   return root;
 }
 
-function routeCard(ctx, route, refresh) {
+export function routeCard(ctx, route, refresh) {
   const eta = route.nextArrivalAt ? countdown(route.nextArrivalAt - Date.now()) : null;
   const ports = route.waypoints
     .map((portId) => ctx.world?.ports.find((port) => port.id === portId)?.name ?? portId)
@@ -83,6 +83,7 @@ function routeCard(ctx, route, refresh) {
             await ctx.socket.action('route.delete', { routeId: route.id });
             toast(t('company.routeDeleted'), 'info');
             ctx.refreshCharacter?.();
+            ctx.refreshRoutes?.();
             refresh();
           } catch (error) { toast(t(error.code ?? 'error.generic'), 'bad'); }
         },
@@ -166,6 +167,7 @@ function routeDialog(ctx, refresh) {
             });
             toast(t('company.routeCreated'), 'good');
             ctx.refreshCharacter?.();
+            ctx.refreshRoutes?.();
             refresh();
           } catch (error) { toast(t(error.code ?? 'error.generic'), 'bad'); return false; }
           return true;

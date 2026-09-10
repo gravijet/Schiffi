@@ -41,4 +41,7 @@ export const UI = {
   stormRing: 'rgba(180, 200, 230, 0.55)',
   fog: 'rgba(6, 12, 18, 0.86)',
   text: '#ece3d2',
+  courseLine: 'rgba(240, 212, 120, 0.55)',
+  routePath: 'rgba(201, 162, 39, 0.35)',
+  routeNext: '#d98a3c',
 };
