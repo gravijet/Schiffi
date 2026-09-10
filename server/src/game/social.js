@@ -9,6 +9,7 @@
 import { getDatabase } from '../db/index.js';
 import { HttpError } from '../http/respond.js';
 import { audit } from '../services/audit.js';
+import { FOUNDING_FEE } from '@schiffi/shared/data/costs.js';
 
 const fail = (code, message = code) => new HttpError(400, code, message);
 
@@ -245,7 +246,7 @@ export async function convoyFor(characterId, instance = null) {
 // trading companies
 // ---------------------------------------------------------------------------
 
-const FOUNDING_FEE = 5000;
+
 
 export async function createGuild({ instance, characterId, userId, payload }) {
   const name = String(payload.name ?? '').trim();

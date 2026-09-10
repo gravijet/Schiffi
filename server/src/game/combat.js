@@ -18,21 +18,20 @@
 import { getDatabase } from '../db/index.js';
 import { HttpError } from '../http/respond.js';
 import { dist, clamp, clamp01 } from '@schiffi/shared/util/math.js';
-import { CELL_SIZE } from '@schiffi/shared/world/constants.js';
 import { HAZARD } from '@schiffi/shared/world/regions.js';
 import { regionAt } from '@schiffi/shared/world/regions.js';
 import { goodById } from '@schiffi/shared/data/goods.js';
 import { addCargo, cargoUsage } from './characters.js';
 import { awardXp } from './progression.js';
 import { audit } from '../services/audit.js';
+import {
+  GUN_RANGE, BOARDING_RANGE, SALVAGE_RANGE, RELOAD_MS, BOARDABLE_HULL,
+  CANNON_PRICE, SHOT_PRICE, MIN_BOUNTY,
+} from '@schiffi/shared/data/costs.js';
 
-/** Gun range in world units; roughly six terrain cells. */
-export const GUN_RANGE = CELL_SIZE * 6;
-export const BOARDING_RANGE = CELL_SIZE * 1.6;
-/** Reload time in milliseconds for a full broadside. */
-export const RELOAD_MS = 6500;
-/** Below this fraction of hull a ship can be boarded. */
-export const BOARDABLE_HULL = 0.32;
+// Ranges, reload and prices are shared with the client so a button can show
+// what it will cost and grey out at the same distance the server refuses at.
+export { GUN_RANGE, BOARDING_RANGE, SALVAGE_RANGE, RELOAD_MS, BOARDABLE_HULL };
 
 const AIM_MODES = { hull: 'hull', sails: 'sails' };
 
@@ -158,6 +157,12 @@ async function sinkTarget({ instance, attacker, target, gateway, userId }) {
   const wreckId = await db.insert('wrecks', {
     world_id: instance.id, x: target.x, y: target.y,
     contents: JSON.stringify(contents), created_at: Date.now(),
+  });
+  // Put it in the live list at once rather than waiting for the next sweep:
+  // the ship that just won the fight is sitting right on top of it.
+  instance.wrecks ??= [];
+  instance.wrecks.unshift({
+    id: String(wreckId), x: target.x, y: target.y, at: Date.now(),
   });
 
   if (isPlayer) {
@@ -381,7 +386,7 @@ export async function salvage({ instance, characterId, userId, payload }) {
 
     const character = await tx.get('SELECT * FROM characters WHERE id = ?', [characterId]);
     if (userId && String(character.user_id) !== String(userId)) throw new HttpError(403, 'error.forbidden');
-    if (dist(Number(wreck.x), Number(wreck.y), Number(character.x), Number(character.y)) > CELL_SIZE * 3) {
+    if (dist(Number(wreck.x), Number(wreck.y), Number(character.x), Number(character.y)) > SALVAGE_RANGE) {
       throw fail('error.tooFar');
     }
 
@@ -405,6 +410,9 @@ export async function salvage({ instance, characterId, userId, payload }) {
       [characterId, Date.now(), wreck.id]);
     await awardXp(tx, characterId, 40);
 
+    if (instance.wrecks) {
+      instance.wrecks = instance.wrecks.filter((w) => String(w.id) !== String(wreck.id));
+    }
     return { wreckId: wreck.id, taken };
   });
 }
@@ -427,7 +435,7 @@ export async function armShip({ instance, characterId, userId, payload }) {
     if (guns === 0 && shot === 0) throw fail('error.validation');
     if (Number(ship.cannons) + guns > slots) throw fail('error.validation', 'not enough gun ports');
 
-    const cost = guns * 480 + shot * 12;
+    const cost = guns * CANNON_PRICE + shot * SHOT_PRICE;
     if (Number(character.coins) < cost) throw fail('trade.notEnoughCoins');
 
     await tx.run('UPDATE characters SET coins = coins - ? WHERE id = ?', [cost, characterId]);
@@ -446,7 +454,9 @@ export async function armShip({ instance, characterId, userId, payload }) {
 /** Place a bounty on another captain. */
 export async function placeBounty({ instance, characterId, userId, payload }) {
   const amount = Math.floor(Number(payload.amount));
-  if (!Number.isFinite(amount) || amount < 100) throw fail('error.validation', 'minimum bounty is 100');
+  if (!Number.isFinite(amount) || amount < MIN_BOUNTY) {
+    throw fail('error.validation', `minimum bounty is ${MIN_BOUNTY}`);
+  }
 
   const db = getDatabase();
   return db.tx(async (tx) => {
@@ -454,9 +464,12 @@ export async function placeBounty({ instance, characterId, userId, payload }) {
     if (userId && String(character.user_id) !== String(userId)) throw new HttpError(403, 'error.forbidden');
     if (Number(character.coins) < amount) throw fail('trade.notEnoughCoins');
 
+    // The client only ever holds net ids ("p42"); accept either form so it
+    // does not have to know how the simulation names its entities.
+    const targetId = String(payload.targetId ?? '').replace(/^p/, '');
     const target = await tx.get(
       'SELECT id, name FROM characters WHERE id = ? AND world_id = ? AND deleted_at IS NULL',
-      [payload.targetId, instance.id]);
+      [targetId, instance.id]);
     if (!target) throw new HttpError(404, 'error.notFound');
     if (String(target.id) === String(characterId)) throw fail('error.validation');
 

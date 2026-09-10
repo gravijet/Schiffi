@@ -152,6 +152,27 @@
 .kv { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; font-size: 12px; }
 .kv dt { color: var(--parchment-dim); } .kv dd { margin: 0; text-align: right; font: var(--mono); }
 
+/* --- discovery album ------------------------------------------------------ */
+
+/* Fixed-width cells so a half-empty set still reads as a set with gaps in it,
+   which is the point of an album. auto-fill, not auto-fit: a single find must
+   not stretch across the whole row. */
+.album-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 6px; margin-bottom: var(--gap);
+}
+.album-cell {
+  border: 1px solid var(--panel-border); border-radius: var(--radius);
+  padding: 6px 8px; font-size: 12px; opacity: 0.42; background: var(--card-bg);
+}
+.album-cell.is-found { opacity: 1; border-color: var(--brass-500); }
+.album-cell__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.card.is-found { border-color: var(--brass-500); }
+
+/* Tighter card for list rows: the contract board stacks a lot of them. */
+.card--tight { padding: 8px 10px; }
+
 /* --- responsive ---------------------------------------------------------- */
 @media (max-width: 900px) {
   .menu-shell { grid-template-columns: 1fr; }

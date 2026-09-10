@@ -119,6 +119,31 @@ export const api = {
   crewData: () => request('/api/data/crew'),
   factions: () => request('/api/data/factions'),
 
+  // --- gameplay -----------------------------------------------------------
+  progressionData: () => request('/api/data/progression'),
+  discoveryData: () => request('/api/data/discoveries'),
+  portMissions: (worldId, portId) => request(`/api/worlds/${worldId}/ports/${portId}/missions`),
+  activeMissions: (characterId) => request(`/api/characters/${characterId}/missions`),
+  album: (characterId) => request(`/api/characters/${characterId}/album`),
+  achievements: (characterId) => request(`/api/characters/${characterId}/achievements`),
+  friends: () => request('/api/friends'),
+  guild: (characterId) => request(`/api/characters/${characterId}/guild`),
+  guilds: (worldId) => request(`/api/worlds/${worldId}/guilds`),
+  convoy: (characterId) => request(`/api/characters/${characterId}/convoy`),
+  market: (worldId, { goodId, limit } = {}) => {
+    const query = new URLSearchParams();
+    if (goodId) query.set('goodId', String(goodId));
+    if (limit) query.set('limit', String(limit));
+    const suffix = query.toString();
+    return request(`/api/worlds/${worldId}/market${suffix ? `?${suffix}` : ''}`);
+  },
+  bounties: (worldId) => request(`/api/worlds/${worldId}/bounties`),
+  routes: (characterId) => request(`/api/characters/${characterId}/routes`),
+  outposts: (worldId, characterId) =>
+    request(`/api/worlds/${worldId}/outposts${characterId ? `?characterId=${characterId}` : ''}`),
+  insurance: (characterId) => request(`/api/characters/${characterId}/insurance`),
+  report: (data) => request('/api/reports', { method: 'POST', body: data }),
+
   // --- admin --------------------------------------------------------------
   adminRoles: () => request('/api/admin/roles'),
   adminPermissions: () => request('/api/admin/permissions'),

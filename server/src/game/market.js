@@ -15,13 +15,14 @@ import { CELL_SIZE, NAVIGABLE } from '@schiffi/shared/world/constants.js';
 import { addCargo, removeCargo, cargoUsage } from './characters.js';
 import { audit } from '../services/audit.js';
 import { shipClass, effectiveStats } from '@schiffi/shared/data/ships.js';
+import {
+  COMMISSION, MIN_AUCTION_MS, MAX_AUCTION_MS, OUTPOST_COST, BUILDING_COST,
+  ROUTE_SHIP_COST_MULTIPLIER, buildingCost,
+} from '@schiffi/shared/data/costs.js';
 
 const fail = (code, message = code) => new HttpError(400, code, message);
 
 /** House cut on a completed sale, and the minimum auction duration. */
-const COMMISSION = 0.04;
-const MIN_AUCTION_MS = 15 * 60_000;
-const MAX_AUCTION_MS = 48 * 3_600_000;
 
 // ---------------------------------------------------------------------------
 // listings and auctions
@@ -379,7 +380,6 @@ export async function claimInsurance({ characterId, userId, payload }) {
 // trade routes and outposts
 // ---------------------------------------------------------------------------
 
-const ROUTE_SHIP_COST_MULTIPLIER = 1.4;
 
 export async function createRoute({ instance, characterId, userId, payload }) {
   const waypoints = Array.isArray(payload.waypoints) ? payload.waypoints.slice(0, 8) : [];
@@ -538,8 +538,6 @@ export async function routesFor(characterId) {
   }));
 }
 
-const OUTPOST_COST = 25_000;
-const BUILDING_COST = { warehouse: 8000, shipyard: 22_000, market: 15_000, lighthouse: 9000, defence: 18_000, administration: 12_000 };
 
 export async function buildOutpost({ instance, characterId, userId, payload }) {
   const db = getDatabase();
@@ -591,7 +589,7 @@ export async function buildBuilding({ characterId, userId, payload }) {
     const existing = await tx.get('SELECT * FROM outpost_buildings WHERE outpost_id = ? AND kind = ?',
       [outpost.id, kind]);
     const level = existing ? Number(existing.level) : 0;
-    const price = Math.round(cost * 1.6 ** level);
+    const price = buildingCost(kind, level);
     if (Number(character.coins) < price) throw fail('trade.notEnoughCoins');
 
     await tx.run('UPDATE characters SET coins = coins - ? WHERE id = ?', [price, characterId]);

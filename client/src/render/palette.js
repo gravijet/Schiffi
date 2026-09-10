@@ -75,6 +75,7 @@ export const UI = {
   port: '#c9a227',
   portRing: 'rgba(201, 162, 39, 0.5)',
   anchorage: '#7fd4c0',
+  wreck: 'rgba(214, 184, 140, 0.75)',
   storm: 'rgba(120, 140, 168, 0.35)',
   stormRing: 'rgba(180, 200, 230, 0.55)',
   fog: 'rgba(6, 12, 18, 0.86)',

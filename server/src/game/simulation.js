@@ -62,6 +62,7 @@ export class Simulation {
     this.running = true;
     this.lastTime = performance.now();
     spawnNpcs(this.instance);
+    this.refreshWrecks().catch((e) => console.error('[sim] wrecks', e.message));
     const loop = () => {
       if (!this.running) return;
       const now = performance.now();
@@ -262,6 +263,7 @@ export class Simulation {
       this.sinceMarketSweep = 0;
       await sweepAuctions(instance).catch((e) => console.error('[sim] auctions', e.message));
       await stepRoutes(instance).catch((e) => console.error('[sim] routes', e.message));
+      await this.refreshWrecks().catch((e) => console.error('[sim] wrecks', e.message));
       reapNpcs(instance);
     }
 
@@ -271,6 +273,23 @@ export class Simulation {
       this.gameHour = hour;
       await this.hourlyStep(hours).catch((e) => console.error('[sim] hourly', e));
     }
+  }
+
+  /**
+   * Unlooted wrecks, kept in memory so they can ride along in snapshots.
+   *
+   * Salvage needs a wreck id, and the only honest way for a player to learn
+   * one is to sail past the wreck and see it. Re-read once every sweep rather
+   * than per snapshot: wrecks appear when a ship goes down, which is rare.
+   */
+  async refreshWrecks() {
+    const db = getDatabase();
+    const rows = await db.all(
+      'SELECT id, x, y, created_at FROM wrecks WHERE world_id = ? AND looted_at IS NULL ' +
+      'ORDER BY created_at DESC LIMIT 400', [this.instance.id]);
+    this.instance.wrecks = rows.map((row) => ({
+      id: String(row.id), x: Number(row.x), y: Number(row.y), at: Number(row.created_at),
+    }));
   }
 
   // --- one game hour ------------------------------------------------------
@@ -518,6 +537,10 @@ export class Simulation {
         .map((s) => ({ id: s.id, x: Math.round(s.x), y: Math.round(s.y), r: Math.round(s.radius),
           i: Math.round(s.intensity * 100) / 100, k: s.kind }));
 
+      const wrecks = (instance.wrecks ?? [])
+        .filter((w) => Math.abs(w.x - player.x) < halfW && Math.abs(w.y - player.y) < halfH)
+        .map((w) => ({ id: w.id, x: Math.round(w.x), y: Math.round(w.y) }));
+
       const wind = this.windAt(player.x, player.y);
       player.send({
         t: 'snapshot',
@@ -539,6 +562,7 @@ export class Simulation {
         light: Math.round(this.daylight * 100) / 100,
         e: entities,
         storms,
+        wrecks,
       });
     }
   }
@@ -553,6 +577,7 @@ function packEntity(entity) {
     h: Math.round(entity.heading * 100) / 100,
     v: Math.round(entity.speed ?? 0),
     n: entity.displayName,
+    nk: entity.npcKind ?? null,
     f: entity.faction ?? null,
     hp: entity.hull !== undefined ? Math.round(clamp01(entity.hull / Math.max(1, entity.maxHull ?? 1)) * 100) : null,
   };

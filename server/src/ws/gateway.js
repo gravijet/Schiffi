@@ -286,6 +286,9 @@ export class Gateway {
         t: MSG.RESULT, rid: message.rid, action: name,
         error: error.code ?? 'error.generic',
         message: error.message,
+        // Structured details let the UI act on the failure rather than only
+        // print it - a cooldown, for instance, becomes a live countdown.
+        details: error.details ?? undefined,
       });
     }
   }

@@ -148,6 +148,7 @@ export async function achievementsFor(userId) {
     const row = byKey.get(achievement.key);
     return {
       key: achievement.key,
+      metric: achievement.metric,
       goal: achievement.goal,
       points: achievement.points,
       progress: Number(row?.progress ?? 0),

@@ -15,12 +15,20 @@ import { goodById, allGoods } from '@schiffi/shared/data/goods.js';
 import { SHIP_CLASSES, UPGRADES, upgradeCost } from '@schiffi/shared/data/ships.js';
 import { currentLocale } from '../state/i18n.js';
 import { settingsView } from './settingsPanel.js';
+import { missionsView } from './panels/missions.js';
+import { land as goAshore } from './panels/expedition.js';
+import { combatView } from './panels/combat.js';
+import { guildView } from './panels/guild.js';
+import { exchangeView } from './panels/exchange.js';
+import { companyView } from './panels/company.js';
+import { albumView } from './panels/album.js';
 
 export class GameUI {
-  constructor({ socket, renderer, onLeave }) {
+  constructor({ socket, renderer, onLeave, onRefresh }) {
     this.socket = socket;
     this.renderer = renderer;
     this.onLeave = onLeave;
+    this.onRefresh = onRefresh;
     this.character = null;
     this.world = null;
     this.portData = null;
@@ -129,14 +137,21 @@ export class GameUI {
     clear(this.actionbar);
     const docked = this.character?.docked;
 
+    // Stable ids, so the buttons stay addressable when the bar is rearranged.
     add(this.actionbar,
       docked
-        ? h('button.primary', { onClick: () => this.leavePort() }, t('port.leave'))
-        : h('button.primary', { onClick: () => this.dockNearby() }, t('port.enter')),
-      h('button', { onClick: () => this.toggleShipPanel() }, t('ship.title')),
-      h('button', { onClick: () => this.togglePortPanel() }, t('port.market')),
-      h('button', { onClick: () => this.chatPanel.classList.toggle('is-collapsed') }, t('chat.title')),
-      h('button', { onClick: () => this.openCodeDialog() }, t('code.title')),
+        ? h('button.primary#act-port', { onClick: () => this.leavePort() }, t('port.leave'))
+        : h('button.primary#act-port', { onClick: () => this.dockNearby() }, t('port.enter')),
+      h('button#act-ship', { onClick: () => this.toggleShipPanel() }, t('ship.title')),
+      h('button#act-market', { onClick: () => this.togglePortPanel() }, t('port.market')),
+      // Ashore and gunnery only make sense at sea; the exchange only at a
+      // berth. Showing the rest would be a lie.
+      docked ? null : h('button#act-explore', { onClick: () => goAshore(this) }, t('explore.expedition')),
+      docked ? null : h('button#act-combat', { onClick: () => this.openCombat() }, t('combat.title')),
+      h('button#act-missions', { onClick: () => this.openMissions() }, t('mission.title')),
+      docked ? h('button#act-exchange', { onClick: () => this.openExchange() }, t('market.title')) : null,
+      h('button#act-more', { onClick: () => this.openMore() }, t('common.more')),
+      h('button#act-chat', { onClick: () => this.chatPanel.classList.toggle('is-collapsed') }, t('chat.title')),
     );
   }
 
@@ -537,6 +552,70 @@ export class GameUI {
         },
       ],
     });
+  }
+
+  // --- gameplay screens ----------------------------------------------------
+
+  /**
+   * Every screen below is a modal over the map rather than another dock: the
+   * map is the game, and a contract board that pushes it aside costs more
+   * than it gives. Each view fetches its own data and refreshes the HUD
+   * through `refreshCharacter` when it changes something.
+   */
+  openMissions() {
+    modal({ title: t('mission.title'), wide: true, body: missionsView(this),
+      actions: [{ label: t('common.close') }] });
+  }
+
+  openCombat() {
+    const view = combatView(this);
+    modal({
+      title: t('combat.title'), wide: true, body: view,
+      actions: [{ label: t('common.close') }],
+      // The target list polls; stop it when the dialog goes away.
+      onClose: () => view.stopTicking?.(),
+    });
+  }
+
+  openExchange() {
+    modal({ title: t('market.title'), wide: true, body: exchangeView(this),
+      actions: [{ label: t('common.close') }] });
+  }
+
+  openGuild() {
+    modal({ title: t('guild.title'), wide: true, body: guildView(this),
+      actions: [{ label: t('common.close') }] });
+  }
+
+  openCompany() {
+    modal({ title: t('company.title'), wide: true, body: companyView(this),
+      actions: [{ label: t('common.close') }] });
+  }
+
+  openAlbum() {
+    modal({ title: t('explore.album'), wide: true, body: albumView(this),
+      actions: [{ label: t('common.close') }] });
+  }
+
+  /** The screens that do not earn a permanent button of their own. */
+  openMore() {
+    const entry = (id, label, open) =>
+      h(`button.ghost#${id}`, { onClick: () => { dialog.close(); open(); } }, label);
+    const dialog = modal({
+      title: t('common.more'),
+      body: h('div.stack', null,
+        entry('more-guild', t('guild.title'), () => this.openGuild()),
+        entry('more-company', t('company.title'), () => this.openCompany()),
+        entry('more-album', t('explore.album'), () => this.openAlbum()),
+        entry('more-code', t('code.title'), () => this.openCodeDialog()),
+        entry('more-settings', t('menu.settings'), () => this.openSettings())),
+      actions: [{ label: t('common.close') }],
+    });
+  }
+
+  /** Re-read the character from the server; the panels call this after a change. */
+  refreshCharacter() {
+    this.onRefresh?.();
   }
 
   openSettings() {

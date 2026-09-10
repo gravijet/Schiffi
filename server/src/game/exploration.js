@@ -210,7 +210,8 @@ export async function gather({ instance, characterId, userId, payload }) {
       [characterId, 'activity', `${island.id}:${activity}`]);
     if (recent && Date.now() - Number(recent.found_at) < ACTIVITY_COOLDOWN_MS) {
       const waitMs = ACTIVITY_COOLDOWN_MS - (Date.now() - Number(recent.found_at));
-      throw new HttpError(429, 'error.rateLimited', `this spot needs ${Math.ceil(waitMs / 60000)} more minutes`);
+      throw new HttpError(429, 'error.rateLimited',
+        `this spot needs ${Math.ceil(waitMs / 60000)} more minutes`, { waitMs });
     }
 
     const ship = await tx.get('SELECT * FROM ships WHERE id = ?', [character.active_ship_id]);

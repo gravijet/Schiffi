@@ -20,6 +20,8 @@ export default {
   unit: {
     coins: 'Münzen', coinsShort: 'M', kg: 'kg', slots: 'Laderaum',
     knots: 'kn', days: 'Tage', hours: 'Std.', percent: '%',
+    seconds: 'Sek.',
+    minutes: 'Min.',
   },
   lang: {
     title: 'Sprache wählen',
@@ -846,5 +848,15 @@ export default {
     SWAMP: 'Sumpf',
     VOLCANO: 'Vulkan',
     ICE: 'Eis',
+  },
+  npcKind: {
+    merchant: 'Handelsschiff',
+    fisher: 'Fischerboot',
+    navy: 'Kriegsschiff',
+    pirate: 'Piratenschiff',
+    explorer: 'Forschungsschiff',
+    transport: 'Transporter',
+    passenger: 'Passagierschiff',
+    player: 'Spielerschiff',
   },
 };

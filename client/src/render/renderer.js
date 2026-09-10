@@ -38,6 +38,7 @@ export class Renderer {
 
     this.entities = [];
     this.storms = [];
+    this.wrecks = [];
     this.self = null;
     this.wind = { a: 0, s: 0 };
     this.daylight = 1;
@@ -196,6 +197,7 @@ export class Renderer {
     this.drawRegions(ctx, g);
     this.drawPorts(ctx, g);
     this.drawStorms(ctx, g, dt);
+    this.drawWrecks(ctx, g);
     this.drawEntities(ctx, g);
     this.drawSelf(ctx, g);
     if (g.fog > 0) this.drawFog(ctx, g);
@@ -374,6 +376,36 @@ export class Renderer {
         ctx.stroke();
         ctx.setLineDash([]);
       }
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Floating wreckage.
+   *
+   * Small and easy to miss on purpose - finding one is the reward for sailing
+   * over a battle site. Drawn under the ships so a fight above a wreck stays
+   * readable.
+   */
+  drawWrecks(ctx, g) {
+    if (!this.wrecks.length) return;
+    const bounds = this.viewBounds(60);
+    const zoom = this.camera.zoom;
+    const size = Math.max(2.5, 7 * zoom);
+
+    ctx.save();
+    ctx.strokeStyle = UI.wreck;
+    ctx.lineWidth = Math.max(1, 1.4 * zoom);
+    for (const wreck of this.wrecks) {
+      if (wreck.x < bounds.x0 || wreck.x > bounds.x1 || wreck.y < bounds.y0 || wreck.y > bounds.y1) continue;
+      const p = this.worldToScreen(wreck.x, wreck.y);
+      // A broken spar: two crossed strokes, no fill, cheap at any zoom.
+      ctx.beginPath();
+      ctx.moveTo(p.x - size, p.y - size * 0.45);
+      ctx.lineTo(p.x + size, p.y + size * 0.45);
+      ctx.moveTo(p.x - size * 0.55, p.y + size * 0.7);
+      ctx.lineTo(p.x + size * 0.8, p.y - size * 0.6);
+      ctx.stroke();
     }
     ctx.restore();
   }

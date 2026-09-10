@@ -32,6 +32,8 @@ export class GameSocket extends EventTarget {
 
     // Entity interpolation buffers: netId -> [{t, x, y, h}, …]
     this.entities = new Map();
+    // Unlooted wrecks inside the current view, straight from the snapshot.
+    this.wrecks = [];
     this.self = null;
     this.selfBuffer = [];
     this.storms = [];
@@ -117,7 +119,10 @@ export class GameSocket extends EventTarget {
         const pending = this._pending?.get(message.rid);
         if (pending) {
           this._pending.delete(message.rid);
-          if (message.error) pending.reject(Object.assign(new Error(message.message ?? message.error), { code: message.error }));
+          if (message.error) {
+            pending.reject(Object.assign(new Error(message.message ?? message.error),
+              { code: message.error, details: message.details ?? null }));
+          }
           else pending.resolve(message.result);
         }
         this.dispatchEvent(new CustomEvent('result', { detail: message }));
@@ -154,6 +159,7 @@ export class GameSocket extends EventTarget {
     this.wind = snapshot.wind;
     this.light = snapshot.light;
     this.storms = snapshot.storms ?? [];
+    this.wrecks = snapshot.wrecks ?? [];
     this.tick = snapshot.tick;
     this.gameTimeMs = snapshot.time;
 
@@ -162,7 +168,8 @@ export class GameSocket extends EventTarget {
       seen.add(entity.id);
       let buffer = this.entities.get(entity.id);
       if (!buffer) {
-        buffer = { id: entity.id, kind: entity.k, name: entity.n, faction: entity.f, samples: [] };
+        buffer = { id: entity.id, kind: entity.k, name: entity.n, npcKind: entity.nk,
+          faction: entity.f, samples: [] };
         this.entities.set(entity.id, buffer);
       }
       buffer.name = entity.n;

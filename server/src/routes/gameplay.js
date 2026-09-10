@@ -29,7 +29,17 @@ export function registerGameplayRoutes(router, { gateway }) {
 
   router.get('/api/data/discoveries', async (ctx) => {
     ctx.res.setHeader('Cache-Control', 'public, max-age=3600');
-    return { activities: ACTIVITIES, wildlife: WILDLIFE, findings: FINDINGS.length };
+    // The album needs to know what the complete set looks like, not just how
+    // big it is, so it can show "12 of 40" and grey out what is still missing.
+    const collectables = FINDINGS
+      .filter((finding) => finding.album)
+      .map((finding) => ({ kind: finding.album, key: finding.good }));
+    return {
+      activities: ACTIVITIES,
+      wildlife: WILDLIFE.map((animal) => ({ key: animal.key, rarity: animal.rarity })),
+      collectables,
+      findings: FINDINGS.length,
+    };
   }, { auth: false });
 
   // --- missions ------------------------------------------------------------

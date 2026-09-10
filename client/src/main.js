@@ -171,6 +171,9 @@ async function startGame(character) {
     socket,
     renderer: state.renderer,
     onLeave: () => { stopGame(); state.menu.mount(app); state.menu.render(); },
+    // The gameplay screens change coins, cargo and crew; they ask for a
+    // re-read rather than patching their own idea of the character.
+    onRefresh: () => refreshCharacter(),
   });
   state.game.character = state.character;
   state.game.world = state.world;
@@ -234,6 +237,7 @@ function wireSocket() {
     state.renderer.wind = socket.wind;
     state.renderer.daylight = socket.light;
     state.renderer.storms = socket.storms;
+    state.renderer.wrecks = socket.wrecks;
 
     // Reveal fog locally so exploration feels immediate.
     if (!self.docked) {
