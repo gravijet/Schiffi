@@ -67,6 +67,11 @@ export default {
     level: 'Level', xp: 'Experience', joined: 'Member since',
     profession: 'Profession', achievements: 'Achievements', statistics: 'Statistics',
     theme: 'Appearance', themeDark: 'Dark', themeLight: 'Light', themeAuto: 'Automatic',
+    avatarHint: 'Cropped to 256 × 256 and stored as WebP.',
+    avatarSaved: 'Picture saved.',
+    avatarTooLarge: 'The picture is too large.',
+    avatarFormat: 'That is not a usable picture.',
+    avatarUnsupported: 'This browser cannot produce WebP.',
   },
   hud: {
     coins: 'Coins', cargo: 'Cargo', crew: 'Crew', hull: 'Hull', sails: 'Sails',

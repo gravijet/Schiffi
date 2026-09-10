@@ -60,6 +60,9 @@ export const DEFAULTS = {
   // Put the tutorial checklist away without giving up on it: it can be
   // reopened, and the progress behind it keeps counting either way.
   tutorialHidden: false,
+  // Keep the built shell and the terrain blob on the device, so a repeat visit
+  // starts without re-downloading either.
+  offlineCache: true,
 };
 
 export function presetValues(preset) {

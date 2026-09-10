@@ -512,6 +512,64 @@ test('an advert is reviewed before anyone sees it', async () => {
   assert.equal(row.clicks, 1);
 });
 
+test('an avatar is stored only if it really is a WebP', async () => {
+  // A PNG renamed to WebP must be refused: the magic bytes decide, not the
+  // Content-Type the client claims.
+  const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+  const refused = await fetch(`${BASE}/api/auth/avatar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'image/webp', Cookie: session.cookie },
+    body: png,
+  });
+  assert.equal(refused.status, 400, 'a PNG was accepted as a WebP');
+
+  // A minimal but genuine WebP container: "RIFF" + size + "WEBP" + a chunk.
+  const payload = Buffer.alloc(64);
+  payload.write('RIFF', 0, 'ascii');
+  payload.writeUInt32LE(56, 4);
+  payload.write('WEBP', 8, 'ascii');
+  payload.write('VP8 ', 12, 'ascii');
+
+  const stored = await fetch(`${BASE}/api/auth/avatar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'image/webp', Cookie: session.cookie },
+    body: payload,
+  });
+  const storedBody = await stored.json();
+  assert.equal(stored.status, 200, JSON.stringify(storedBody));
+  const { avatar } = storedBody;
+  assert.match(avatar, /^\/api\/users\/\d+\/avatar/);
+
+  const served = await fetch(`${BASE}${avatar}`);
+  assert.equal(served.status, 200);
+  assert.equal(served.headers.get('content-type'), 'image/webp');
+  const bytes = Buffer.from(await served.arrayBuffer());
+  assert.equal(bytes.length, payload.length, 'the stored bytes changed on the way back');
+
+  // It shows up on the account, as a URL rather than a path on disk.
+  const me = await api('/api/auth/me');
+  assert.equal(typeof me.body.user.avatar, 'string');
+  assert.equal(me.body.user.avatarPath, undefined, 'the file name leaked to the client');
+
+  const cleared = await api('/api/auth/avatar', { method: 'DELETE' });
+  assert.equal(cleared.status, 200);
+  const after = await api('/api/auth/me');
+  assert.equal(after.body.user.avatar, null);
+  assert.equal((await fetch(`${BASE}${avatar}`)).status, 404, 'a deleted avatar was still served');
+});
+
+test('an oversized avatar is refused', async () => {
+  const big = Buffer.alloc(600 * 1024);
+  big.write('RIFF', 0, 'ascii');
+  big.write('WEBP', 8, 'ascii');
+  const response = await fetch(`${BASE}/api/auth/avatar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'image/webp', Cookie: session.cookie },
+    body: big,
+  });
+  assert.equal(response.status, 413, 'a 600 KiB avatar got through');
+});
+
 test('the simulation is actually running', async () => {
   const status = await api(`/api/worlds/${worldId}/status`);
   assert.equal(status.body.loaded, true);

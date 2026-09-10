@@ -100,6 +100,35 @@ async function main() {
     settings,
     setLocale: (code) => import('./ui/language.js').then((m) => m.setLocale(code)),
   };
+
+  registerServiceWorker();
+}
+
+/**
+ * Register the offline cache.
+ *
+ * Deliberately after the first paint: the point is a faster *second* visit, so
+ * doing it during boot would only compete for bandwidth with the first one. A
+ * browser that refuses (private mode, no HTTPS, disabled) simply goes without;
+ * nothing in the game depends on it.
+ */
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  if (!settings.get('offlineCache')) return;
+
+  navigator.serviceWorker.register('/sw.js', { scope: '/' })
+    .then((registration) => {
+      // A new build should take over on the next load, not linger a version
+      // behind because an old worker is still controlling the page.
+      registration.addEventListener('updatefound', () => {
+        registration.installing?.addEventListener('statechange', function onChange() {
+          if (this.state === 'installed' && navigator.serviceWorker.controller) {
+            this.postMessage('skipWaiting');
+          }
+        });
+      });
+    })
+    .catch((error) => console.info('[schiffi] offline cache unavailable:', error.message));
 }
 
 // ---------------------------------------------------------------------------

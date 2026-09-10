@@ -97,6 +97,11 @@ export default {
     themeDark: 'Dunkel',
     themeLight: 'Hell',
     themeAuto: 'Automatisch',
+    avatarHint: 'Wird auf 256 × 256 zugeschnitten und als WebP gespeichert.',
+    avatarSaved: 'Profilbild gespeichert.',
+    avatarTooLarge: 'Das Bild ist zu groß.',
+    avatarFormat: 'Das ist kein verwendbares Bild.',
+    avatarUnsupported: 'Dieser Browser kann kein WebP erzeugen.',
   },
   hud: {
     coins: 'Münzen',

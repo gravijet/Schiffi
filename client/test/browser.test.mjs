@@ -29,6 +29,7 @@ let browser;
 let page;
 let base;
 const consoleErrors = [];
+const consoleWarnings = [];
 
 before(async () => {
   for (const suffix of ['', '-wal', '-shm']) rmSync(`${TEST_DB}${suffix}`, { force: true });
@@ -43,6 +44,7 @@ before(async () => {
   page = await context.newPage();
   page.on('console', (message) => {
     if (message.type() === 'error') consoleErrors.push(message.text());
+    if (message.type() === 'warning') consoleWarnings.push(message.text());
   });
   page.on('pageerror', (error) => consoleErrors.push(`pageerror: ${error.message}`));
 });
@@ -313,6 +315,45 @@ test('every action-bar button opens a screen without an error', async () => {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(200);
   }
+});
+
+test('the offline cache registers and keeps the terrain, never the API', async () => {
+  const registered = await page.evaluate(async () => {
+    const registration = await navigator.serviceWorker.ready.catch(() => null);
+    return registration ? registration.scope : null;
+  });
+  assert.ok(registered, 'no service worker took control');
+
+  // A reload has to come back through the worker, and the terrain blob has to
+  // be in its cache; the API must not be.
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller), { timeout: 15_000 });
+
+  const cached = await page.evaluate(async () => {
+    const names = await caches.keys();
+    const urls = [];
+    for (const name of names) {
+      const cache = await caches.open(name);
+      for (const request of await cache.keys()) urls.push(request.url);
+    }
+    return urls;
+  });
+
+  assert.ok(cached.some((url) => /\/api\/worlds\/[^/]+\/terrain$/.test(url)),
+    `the terrain blob was not cached:\n${cached.join('\n')}`);
+  const liveState = cached.filter((url) =>
+    url.includes('/api/') && !/\/terrain$/.test(url));
+  assert.deepEqual(liveState, [],
+    `live server state was cached, which would make it a lie:\n${liveState.join('\n')}`);
+});
+
+test('the terrain image was painted in a worker, not on the main thread', () => {
+  // The fallback warns when it has to paint on the main thread; a clean run
+  // means the worker did the work. Without this the worker could silently
+  // stop being used and nothing would notice.
+  const fellBack = consoleErrors.concat(consoleWarnings)
+    .filter((message) => /terrain.*worker/i.test(message));
+  assert.deepEqual(fellBack, [], `the terrain worker was not used:\n${fellBack.join('\n')}`);
 });
 
 test('no uncaught errors were logged during the session', () => {

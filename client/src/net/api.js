@@ -94,6 +94,21 @@ export const api = {
   revokeSession: (id) => request(`/api/auth/sessions/${id}`, { method: 'DELETE' }),
   revokeAllSessions: () => request('/api/auth/sessions/revoke-all', { method: 'POST' }),
   exportData: () => request('/api/auth/export'),
+  /** The blob is already WebP at the stored size; it goes up as raw bytes. */
+  uploadAvatar: async (blob) => {
+    const response = await fetch('/api/auth/avatar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'image/webp' },
+      body: blob,
+      credentials: 'same-origin',
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new ApiError(response.status, payload?.code, payload?.message, payload?.details);
+    }
+    return payload;
+  },
+  removeAvatar: () => request('/api/auth/avatar', { method: 'DELETE' }),
   deleteAccount: (password) => request('/api/auth/delete', { method: 'POST', body: { password } }),
 
   // --- game ---------------------------------------------------------------

@@ -419,7 +419,9 @@ export function publicUser(row) {
     username: row.username,
     locale: row.locale,
     theme: row.theme,
-    avatarPath: row.avatar_path,
+    // The client gets a URL, not a file name: the digest in the name makes it
+    // cacheable forever, and nothing outside this module needs the path.
+    avatar: row.avatar_path ? `/api/users/${row.id}/avatar?v=${String(row.avatar_path).split('-')[1] ?? ''}` : null,
     emailVerified: Boolean(row.email_verified_at),
     createdAt: Number(row.created_at),
     lastLoginAt: row.last_login_at ? Number(row.last_login_at) : null,

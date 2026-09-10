@@ -10,6 +10,8 @@ import { badRequest, unauthorized, notFound } from '../http/respond.js';
 import { negotiateLocale } from '@schiffi/shared/i18n/index.js';
 import { permissionsFor } from '../services/rbac.js';
 import config from '../config.js';
+import { storeAvatar, readAvatar, removeAvatar } from '../services/avatars.js';
+import { audit } from '../services/audit.js';
 
 const SESSION_COOKIE = 'sid';
 
@@ -74,6 +76,38 @@ export function registerAuthRoutes(router) {
     }, ctx.actor);
     return { ok: true };
   });
+
+  // --- avatar ---------------------------------------------------------------
+
+  router.post('/api/auth/avatar', async (ctx) => {
+    const buffer = await ctx.rawBody();
+    const stored = await storeAvatar(ctx.user.id, buffer);
+    await audit(ctx.actor, 'account.avatar_set', 'user', String(ctx.user.id),
+      { bytes: stored.bytes });
+    return { avatar: `/api/users/${ctx.user.id}/avatar?v=${stored.path.split('-')[1]}` };
+  });
+
+  router.delete('/api/auth/avatar', async (ctx) => {
+    await removeAvatar(ctx.user.id);
+    await audit(ctx.actor, 'account.avatar_cleared', 'user', String(ctx.user.id));
+    return { ok: true };
+  });
+
+  /**
+   * Avatars are public: other players see them in chat and on the leaderboard.
+   * The name carries a content digest, so this may be cached hard.
+   */
+  router.get('/api/users/:id/avatar', async (ctx) => {
+    const avatar = await readAvatar(ctx.params.id);
+    if (!avatar) throw notFound();
+    ctx.res.writeHead(200, {
+      'Content-Type': 'image/webp',
+      'Content-Length': avatar.data.length,
+      'Cache-Control': 'public, max-age=31536000, immutable',
+    });
+    ctx.res.end(avatar.data);
+    return undefined;
+  }, { auth: false });
 
   router.post('/api/auth/password', async (ctx) => {
     const body = await ctx.body();

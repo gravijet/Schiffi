@@ -6,8 +6,9 @@
  * renderer then draws scaled. That is the whole trick behind the map being
  * cheap: no per-cell work happens during a frame, only one drawImage.
  *
- * The image is built in slices across several frames so a weak device never
- * stalls for a second while it decodes.
+ * The image is built in a worker where there is one, so decoding never stalls
+ * the main thread; on a browser without workers it falls back to painting in
+ * slices across several frames, which is slower but never freezes the page.
  */
 import { CELLS_X, CELLS_Y, CELL_SIZE, T, IS_LAND, NAVIGABLE } from '@schiffi/shared/world/constants.js';
 import { TERRAIN_COLOURS, TERRAIN_COLOURS_LIGHT } from './palette.js';
@@ -34,14 +35,18 @@ export function decodeTerrain(buffer) {
 }
 
 /**
- * Build the base map image, yielding between slices.
+ * Build the base map image.
+ *
+ * Handed to a worker when the browser has one, which is both faster (no
+ * yielding between slices) and smoother (the boot animation keeps running).
+ * The main-thread path is kept as a fallback and slices as it always did, so
+ * a browser without workers still gets a map rather than an error.
+ *
  * @param {(progress:number)=>void} onProgress
  */
 export async function buildTerrainImage(terrain, { theme = 'dark', detail = 1, onProgress } = {}) {
   const { width, height, cells } = terrain;
   const palette = theme === 'light' ? TERRAIN_COLOURS_LIGHT : TERRAIN_COLOURS;
-  const image = new ImageData(width, height);
-  const pixels = image.data;
 
   // Precompute the two variants per terrain class as packed integers.
   const variantA = new Uint32Array(16);
@@ -51,39 +56,100 @@ export async function buildTerrainImage(terrain, { theme = 'dark', detail = 1, o
     variantA[t] = pack(entry[0]);
     variantB[t] = pack(entry[1]);
   }
-  const words = new Uint32Array(pixels.buffer);
+
+  const offloaded = await buildInWorker({ cells, width, height, variantA, variantB, detail, onProgress });
+  if (offloaded) return offloaded;
+  return buildOnMainThread({ cells, width, height, variantA, variantB, detail, onProgress });
+}
+
+let workerFailed = false;
+
+/** Try the worker. Returns null if there is none, or if it could not be used. */
+async function buildInWorker({ cells, width, height, variantA, variantB, detail, onProgress }) {
+  if (workerFailed || typeof Worker === 'undefined' || typeof createImageBitmap !== 'function') return null;
+
+  let worker;
+  try {
+    worker = new Worker(new URL('./terrainWorker.js', import.meta.url), { type: 'module' });
+  } catch {
+    workerFailed = true;
+    return null;
+  }
+
+  // The worker gets its own copy of the cells: `terrain.cells` is a view on the
+  // blob the rest of the client still reads for collision and the minimap, so
+  // it must not be transferred away.
+  const copy = cells.slice();
+
+  try {
+    const bitmap = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('terrain worker timed out')), 30_000);
+      worker.onmessage = (event) => {
+        clearTimeout(timer);
+        if (event.data.error) reject(new Error(event.data.error));
+        else resolve(event.data.bitmap);
+      };
+      worker.onerror = (event) => { clearTimeout(timer); reject(new Error(event.message)); };
+      worker.postMessage(
+        { id: 1, cells: copy, width, height, variantA, variantB, detail },
+        [copy.buffer]);
+    });
+    onProgress?.(1);
+    return bitmap;
+  } catch (error) {
+    // Fall back rather than fail: a map is not optional.
+    console.warn('[terrain] worker unavailable, painting on the main thread:', error.message);
+    workerFailed = true;
+    return null;
+  } finally {
+    worker.terminate();
+  }
+}
+
+/** The fallback: same painting, sliced so the page keeps responding. */
+async function buildOnMainThread({ cells, width, height, variantA, variantB, detail, onProgress }) {
+  const image = new ImageData(width, height);
+  const words = new Uint32Array(image.data.buffer);
 
   const SLICE_ROWS = 64;
   for (let y0 = 0; y0 < height; y0 += SLICE_ROWS) {
     const y1 = Math.min(height, y0 + SLICE_ROWS);
-    for (let y = y0; y < y1; y++) {
-      for (let x = 0; x < width; x++) {
-        const index = y * width + x;
-        const t = cells[index];
-        // A cheap hash decides which variant a cell uses: enough irregularity
-        // to break up flat areas, and stable between frames.
-        const h = ((x * 73856093) ^ (y * 19349663)) & 0xff;
-        let colour = h < 128 * detail ? variantA[t] : variantB[t];
-
-        // Coastlines get a darker rim so the shore reads at low zoom.
-        if (IS_LAND[t] && detail > 0.25) {
-          const left = x > 0 ? cells[index - 1] : t;
-          const right = x < width - 1 ? cells[index + 1] : t;
-          const up = y > 0 ? cells[index - width] : t;
-          const down = y < height - 1 ? cells[index + width] : t;
-          if (NAVIGABLE[left] || NAVIGABLE[right] || NAVIGABLE[up] || NAVIGABLE[down]) {
-            colour = darken(colour, 0.72);
-          }
-        }
-        words[index] = colour;
-      }
-    }
+    paintRows(words, cells, width, height, variantA, variantB, detail, y0, y1);
     onProgress?.(y1 / height);
     // Yield to the event loop: the boot screen keeps animating.
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
-
   return createImageBitmap(image);
+}
+
+/**
+ * Paint rows [y0, y1) into `words`.
+ *
+ * Shared with the worker in intent, deliberately duplicated in code: importing
+ * this module from the worker would pull the whole render palette and its DOM
+ * assumptions into the worker bundle. The two must be kept in step.
+ */
+function paintRows(words, cells, width, height, variantA, variantB, detail, y0, y1) {
+  for (let y = y0; y < y1; y++) {
+    const row = y * width;
+    for (let x = 0; x < width; x++) {
+      const index = row + x;
+      const t = cells[index];
+      const h = ((x * 73856093) ^ (y * 19349663)) & 0xff;
+      let colour = h < 128 * detail ? variantA[t] : variantB[t];
+
+      if (IS_LAND[t] && detail > 0.25) {
+        const left = x > 0 ? cells[index - 1] : t;
+        const right = x < width - 1 ? cells[index + 1] : t;
+        const up = y > 0 ? cells[index - width] : t;
+        const down = y < height - 1 ? cells[index + width] : t;
+        if (NAVIGABLE[left] || NAVIGABLE[right] || NAVIGABLE[up] || NAVIGABLE[down]) {
+          colour = darken(colour, 0.72);
+        }
+      }
+      words[index] = colour;
+    }
+  }
 }
 
 /** A small overview image for the minimap, at one pixel per four cells. */

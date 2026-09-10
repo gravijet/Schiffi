@@ -14,6 +14,8 @@ import { settingsView, applyTheme } from './settingsPanel.js';
 import { languageGrid, setLocale } from './language.js';
 import { adminView } from './admin.js';
 import { manualView } from './manual.js';
+import { avatarCard, placeholder } from './avatar.js';
+import { countdown } from './panels/missions.js';
 
 export class MainMenu {
   constructor({ onPlay, onLogout }) {
@@ -347,6 +349,7 @@ export class MainMenu {
 
     const user = this.session.user;
     add(root,
+      avatarCard(this.session, (avatar) => { user.avatar = avatar; }),
       h('div.card', null,
         h('div.card__title', null, user.username),
         h('dl.kv', null,
@@ -453,27 +456,61 @@ export class MainMenu {
     });
   }
 
+  /**
+   * Rankings, live and frozen.
+   *
+   * The live boards are recomputed from current state every time they are
+   * asked for; a closed season's boards are the standings as they stood when
+   * it ended. Both come from the server, and the season picker makes clear
+   * which of the two is on screen.
+   */
   leaderboardScreen() {
     const root = h('div', null, h('h2', null, t('leaderboard.title')));
     const body = h('div');
     root.append(body);
     let board = 'wealth';
+    let seasonId = null;
+
+    const BOARDS = [
+      ['wealth', 'leaderboard.wealth'],
+      ['trade', 'leaderboard.trade'],
+      ['discoveries', 'leaderboard.discoveries'],
+      ['level', 'leaderboard.level'],
+      ['distance', 'leaderboard.distance'],
+    ];
 
     const load = async () => {
       clear(body);
-      const { worlds } = await api.worlds();
+      const [{ worlds }, seasonInfo] = await Promise.all([
+        api.worlds(),
+        api.seasons().catch(() => null),
+      ]);
       if (!worlds.length) { body.append(h('p.muted', null, t('common.empty'))); return; }
       const worldId = worlds[0].id;
 
+      if (seasonInfo?.current) {
+        const closed = seasonInfo.seasons.filter((season) => season.closedAt);
+        const left = countdown(seasonInfo.current.endsAt - Date.now());
+        body.append(h('div.row', { style: { marginBottom: '10px', flexWrap: 'wrap' } },
+          h(`button${seasonId === null ? '.primary' : '.ghost'}`, {
+            onClick: () => { seasonId = null; load(); },
+          }, `${t('leaderboard.current')}${left ? ` · ${t('leaderboard.endsIn', { time: left })}` : ''}`),
+          ...closed.map((season) =>
+            h(`button${String(seasonId) === String(season.id) ? '.primary' : '.ghost'}`, {
+              onClick: () => { seasonId = season.id; load(); },
+            }, t('leaderboard.season', { number: season.number })))));
+      }
+
       body.append(h('div.row', { style: { marginBottom: '10px', flexWrap: 'wrap' } },
-        ...[['wealth', 'leaderboard.wealth'], ['trade', 'leaderboard.trade'],
-          ['discoveries', 'leaderboard.discoveries'], ['level', 'profile.level'],
-          ['distance', 'cartography.coverage']].map(([key, label]) =>
+        ...BOARDS.map(([key, label]) =>
           h(`button${board === key ? '.primary' : '.ghost'}`, {
             onClick: () => { board = key; load(); },
           }, t(label)))));
 
-      const { entries } = await api.leaderboard(worldId, board);
+      const { entries } = seasonId === null
+        ? await api.leaderboard(worldId, board)
+        : await api.seasonBoard(seasonId, worldId, board);
+
       const table = h('table', null,
         h('thead', null, h('tr', null,
           h('th', null, t('leaderboard.rank')),
@@ -484,7 +521,9 @@ export class MainMenu {
             h('td.mono', null, String(entry.rank)),
             h('td', null, entry.name),
             h('td.right.mono', null, tc(entry.score))))));
-      body.append(entries.length ? table : h('p.muted', null, t('common.empty')));
+      body.append(entries.length
+        ? table
+        : h('p.muted', null, t(seasonId === null ? 'common.empty' : 'leaderboard.empty')));
     };
     load().catch(() => body.append(h('p.bad', null, t('error.network'))));
     return root;

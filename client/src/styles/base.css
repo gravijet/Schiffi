@@ -293,3 +293,11 @@ tr.is-selected { background: rgba(201, 162, 39, 0.16); }
 .bar { height: 6px; background: var(--sea-800); border: 1px solid var(--sea-600); border-radius: 2px; overflow: hidden; }
 .bar__fill { height: 100%; background: var(--good); transition: width 0.2s ease; }
 .bar__fill.warn { background: var(--warn); } .bar__fill.bad { background: var(--bad); }
+
+/* Avatars are always square and always the same size, so the layout does not
+   shift when one loads. */
+.avatar {
+  width: 96px; height: 96px; border-radius: var(--radius);
+  object-fit: cover; border: 1px solid var(--panel-border); background: var(--card-bg);
+}
+.avatar--small { width: 24px; height: 24px; }
