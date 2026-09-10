@@ -173,6 +173,37 @@
 /* Tighter card for list rows: the contract board stacks a lot of them. */
 .card--tight { padding: 8px 10px; }
 
+/* --- tutorial ------------------------------------------------------------- */
+
+/* Sits over the map on the left, above the ship panel, and never takes the
+   pointer away from the chart underneath except on its own controls. */
+#tutorial {
+  position: fixed; left: 12px; top: 56px; width: 290px; max-width: calc(100vw - 24px);
+  z-index: 40; border: 1px solid var(--panel-border); border-radius: var(--radius);
+  background: var(--panel-bg); backdrop-filter: blur(6px);
+  padding: 10px 12px; font-size: 12px;
+}
+.tutorial__head { margin-bottom: 8px; }
+.tutorial__step {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 4px 0; opacity: 0.5; line-height: 1.35;
+}
+.tutorial__step.is-current { opacity: 1; }
+.tutorial__step.is-done { opacity: 0.6; text-decoration: line-through; }
+.tutorial__mark {
+  flex: 0 0 18px; height: 18px; border-radius: 50%; text-align: center;
+  border: 1px solid var(--panel-border); font: var(--mono); font-size: 10px; line-height: 17px;
+}
+.tutorial__step.is-done .tutorial__mark { border-color: var(--good); color: var(--good); }
+.tutorial__step.is-current .tutorial__mark { border-color: var(--brass-500); color: var(--brass-300); }
+
+/* On a narrow screen the ship panel becomes a drawer, so the checklist moves
+   to the top and shrinks rather than covering the map. */
+@media (max-width: 860px) {
+  #tutorial { left: 8px; right: 8px; width: auto; top: 50px; }
+  .tutorial__step:not(.is-current):not(.is-done) { display: none; }
+}
+
 /* --- responsive ---------------------------------------------------------- */
 @media (max-width: 900px) {
   .menu-shell { grid-template-columns: 1fr; }

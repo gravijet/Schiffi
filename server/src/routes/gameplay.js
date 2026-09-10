@@ -13,6 +13,7 @@ import { listFriends, guildFor, listGuilds, convoyFor } from '../game/social.js'
 import { listMarket, routesFor, outpostsFor, premiumFor } from '../game/market.js';
 import { achievementsFor, ACHIEVEMENTS, PROFESSIONS, xpForLevel, levelForXp } from '../game/progression.js';
 import { WILDLIFE, FINDINGS, ACTIVITIES } from '@schiffi/shared/data/discoveries.js';
+import { TUTORIAL_STEPS, tutorialProgress } from '@schiffi/shared/data/tutorial.js';
 import { getDatabase } from '../db/index.js';
 import { notFound, forbidden, badRequest } from '../http/respond.js';
 
@@ -72,6 +73,33 @@ export function registerGameplayRoutes(router, { gateway }) {
       nextLevelXp: xpForLevel(Number(row.level) + 1),
     };
   });
+
+  // --- tutorial ------------------------------------------------------------
+
+  router.get('/api/characters/:id/tutorial', async (ctx) => {
+    await assertOwnership(ctx, ctx.params.id);
+    return tutorialFor(ctx.params.id);
+  });
+
+  /** The only thing the client may assert about the tutorial is giving up on it. */
+  router.post('/api/characters/:id/tutorial/skip', async (ctx) => {
+    await assertOwnership(ctx, ctx.params.id);
+    const db = getDatabase();
+    await db.run('UPDATE tutorial_progress SET skipped = 1 WHERE character_id = ?', [ctx.params.id]);
+    return tutorialFor(ctx.params.id);
+  });
+
+  router.post('/api/characters/:id/tutorial/resume', async (ctx) => {
+    await assertOwnership(ctx, ctx.params.id);
+    const db = getDatabase();
+    await db.run('UPDATE tutorial_progress SET skipped = 0 WHERE character_id = ?', [ctx.params.id]);
+    return tutorialFor(ctx.params.id);
+  });
+
+  router.get('/api/data/tutorial', async (ctx) => {
+    ctx.res.setHeader('Cache-Control', 'public, max-age=3600');
+    return { steps: TUTORIAL_STEPS };
+  }, { auth: false });
 
   // --- social --------------------------------------------------------------
   router.get('/api/friends', async (ctx) => listFriends(ctx.user.id, gateway));
@@ -269,6 +297,48 @@ export function registerGameplayRoutes(router, { gateway }) {
     return { stormId: storm.id, kind: storm.kind, x: Math.round(storm.x), y: Math.round(storm.y),
       radius: Math.round(storm.radius) };
   }, { permission: 'world.events' });
+}
+
+/**
+ * Tutorial progress, measured rather than reported.
+ *
+ * Every number here comes from a table the server writes itself, so the only
+ * way to advance a step is to have actually done the thing.
+ */
+async function tutorialFor(characterId) {
+  const db = getDatabase();
+  const stats = await db.get('SELECT * FROM player_stats WHERE character_id = ?', [characterId]);
+  const character = await db.get('SELECT active_ship_id FROM characters WHERE id = ?', [characterId]);
+  const crew = await db.get('SELECT COUNT(*) AS n FROM crew_members WHERE ship_id = ?',
+    [character?.active_ship_id ?? null]);
+  const taken = await db.get('SELECT COUNT(*) AS n FROM missions WHERE taken_by = ?', [characterId]);
+  const done = await db.get(
+    "SELECT COUNT(*) AS n FROM missions WHERE taken_by = ? AND status = 'done'", [characterId]);
+
+  const progress = tutorialProgress({
+    distance: Number(stats?.distance ?? 0),
+    goods_bought: Number(stats?.goods_bought ?? 0),
+    goods_sold: Number(stats?.goods_sold ?? 0),
+    ports_visited: Number(stats?.ports_visited ?? 0),
+    crew_size: Number(crew?.n ?? 0),
+    missions_taken: Number(taken?.n ?? 0),
+    missions_done: Number(done?.n ?? 0),
+  });
+
+  let row = await db.get('SELECT * FROM tutorial_progress WHERE character_id = ?', [characterId]);
+  if (!row) {
+    await db.insert('tutorial_progress', { character_id: characterId, step: 0 });
+    row = { step: 0, skipped: 0, completed_at: null };
+  }
+
+  // Persist what was measured, so the record matches what the player is shown.
+  const completedAt = progress.completed ? (row.completed_at ?? Date.now()) : null;
+  if (Number(row.step) !== progress.step || Number(row.completed_at ?? 0) !== Number(completedAt ?? 0)) {
+    await db.run('UPDATE tutorial_progress SET step = ?, completed_at = ? WHERE character_id = ?',
+      [progress.step, completedAt, characterId]);
+  }
+
+  return { ...progress, skipped: Number(row.skipped) === 1, completedAt };
 }
 
 /** Load the active event set into a world instance; the economy reads it. */

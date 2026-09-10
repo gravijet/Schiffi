@@ -216,8 +216,11 @@ test('the contract board shows what the port has really posted', async () => {
 test('accepting a contract really moves it into the active list', async () => {
   await page.locator('#act-missions').click();
   await page.waitForSelector('.modal .card button', { timeout: 10_000 });
-  await page.locator('.modal .card button').first().click();
-  await page.waitForTimeout(1200);
+  // Contracts the starting boat cannot carry are offered greyed out with a
+  // reason, so take the first one it can actually accept.
+  const accept = page.locator('.modal .card button:not([disabled])').first();
+  await accept.click();
+  await page.waitForTimeout(1500);
 
   const active = await page.evaluate(async () => {
     const response = await fetch(`/api/characters/${window.__schiffi.character.id}/missions`,

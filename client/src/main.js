@@ -276,6 +276,8 @@ function wireSocket() {
         // Docking state decides what the right-hand panel may show at all;
         // without this it kept offering a market after the ship had sailed.
         state.game.refreshPort();
+        // A purchase, a hire or a delivery may have finished a tutorial step.
+        state.game.tutorial.refresh();
         break;
       case 'disease':
         toast(`${message.crewName}: ${t('crew.sick')} (${message.disease})`, 'warn');

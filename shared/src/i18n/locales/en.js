@@ -385,6 +385,21 @@ export default {
   tutorial: {
     title: 'Tutorial', start: 'Start tutorial', skip: 'Skip', next: 'Next',
     done: 'Tutorial complete.', step: 'Step {current} of {total}',
+    subtitle: 'Eight things to do, and you are a merchant. A step only counts once you have really done it.',
+    progress: '{done} of {total} done',
+    resume: 'Resume the tutorial',
+    hide: 'Hide',
+    finished: 'Done. The rest of the sea is yours.',
+    steps: {
+      move: 'Cast off and sail a little. Arrow keys, WASD, a gamepad or the joystick at the bottom right.',
+      buy: 'Buy a commodity in port. Buying cheaply is half the trade.',
+      sail: 'Head out to open water. The next port pays different prices.',
+      dock: 'Dock at a second port.',
+      sell: 'Sell your cargo. Watch the price history, not just today’s price.',
+      crew: 'Hire a second hand at the crew office. Sailing alone goes badly.',
+      contract: 'Take a contract from the notice board.',
+      deliver: 'Deliver the contract. After that the whole sea is open to you.',
+    },
   },
   support: {
     title: 'Support', newTicket: 'New ticket', subject: 'Subject', message: 'Message',

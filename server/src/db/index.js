@@ -97,11 +97,24 @@ class SqliteDb {
     this.lock = Promise.resolve();
   }
 
-  /** Serialise against any in-flight transaction. */
+  /**
+   * Serialise against any in-flight transaction.
+   *
+   * The mutex has to be *held*, not merely waited on: node:sqlite runs
+   * synchronously on one connection, so a bare statement that starts after a
+   * BEGIN IMMEDIATE becomes part of that transaction and is rolled back with
+   * it. Waiting without holding left exactly that window open.
+   */
   async _guard(fn) {
-    const current = this.lock;
-    await current;
-    return fn();
+    const previous = this.lock;
+    let release;
+    this.lock = new Promise((resolve) => { release = resolve; });
+    await previous;
+    try {
+      return fn();
+    } finally {
+      release();
+    }
   }
 
   async all(sql, params = []) { return this._guard(() => this.conn.all(sql, params)); }

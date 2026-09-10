@@ -57,6 +57,9 @@ export const DEFAULTS = {
   },
   minimap: true,
   chatOpen: true,
+  // Put the tutorial checklist away without giving up on it: it can be
+  // reopened, and the progress behind it keeps counting either way.
+  tutorialHidden: false,
 };
 
 export function presetValues(preset) {

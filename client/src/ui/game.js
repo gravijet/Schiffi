@@ -22,6 +22,7 @@ import { guildView } from './panels/guild.js';
 import { exchangeView } from './panels/exchange.js';
 import { companyView } from './panels/company.js';
 import { albumView } from './panels/album.js';
+import { Tutorial } from './panels/tutorial.js';
 
 export class GameUI {
   constructor({ socket, renderer, onLeave, onRefresh }) {
@@ -43,6 +44,7 @@ export class GameUI {
     this.perf = h('div#perf', { hidden: !settings.get('perfOverlay') });
     this.actionbar = h('div#actionbar');
     this.joystick = h('div#joystick', null, h('div.knob'));
+    this.tutorial = new Tutorial(this);
     this.minimapWrap = h('div#minimap-wrap', null,
       h('canvas#minimap', { width: 256, height: 160 }));
 
@@ -59,16 +61,21 @@ export class GameUI {
     add(this.root,
       this.topbar, this.perf, this.shipPanel, this.portPanel,
       this.chatPanel, this.minimapWrap, this.actionbar, this.joystick);
+    this.tutorial.mount(this.root);
   }
 
   mount(parent) {
     parent.append(this.root);
     this.renderTopbar();
     this.renderActionbar();
+    this.tutorial.start();
     return this;
   }
 
-  unmount() { this.root.remove(); }
+  unmount() {
+    this.tutorial.stop();
+    this.root.remove();
+  }
 
   // --- top bar ------------------------------------------------------------
 
@@ -628,6 +635,7 @@ export class GameUI {
         entry('more-guild', t('guild.title'), () => this.openGuild()),
         entry('more-company', t('company.title'), () => this.openCompany()),
         entry('more-album', t('explore.album'), () => this.openAlbum()),
+        entry('more-tutorial', t('tutorial.title'), () => this.tutorial.resume()),
         entry('more-code', t('code.title'), () => this.openCodeDialog()),
         entry('more-settings', t('menu.settings'), () => this.openSettings())),
       actions: [{ label: t('common.close') }],

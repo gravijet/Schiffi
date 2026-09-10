@@ -10,6 +10,7 @@ import { h, add, clear, tabs, toast, confirmDialog } from '../dom.js';
 import { t, tc } from '../../state/i18n.js';
 import { api } from '../../net/api.js';
 import { goodById } from '@schiffi/shared/data/goods.js';
+import { MAX_ACTIVE_CONTRACTS } from '@schiffi/shared/data/costs.js';
 import { currentLocale } from '../../state/i18n.js';
 
 const goodName = (goodId) => {
@@ -83,6 +84,33 @@ function requirement(mission, self) {
   }
 }
 
+/**
+ * Why this ship cannot take that contract, or null when it can.
+ *
+ * Only the reasons that are plain from the ship's own numbers - the hold, the
+ * cabins, how many contracts are already in hand. The server checks all of
+ * these again; the point here is not to offer a button that is certain to be
+ * refused, and to say why instead.
+ */
+function blocker(mission, character, activeCount) {
+  if (!character?.ship) return 'error.notInPort';
+  if (activeCount >= MAX_ACTIVE_CONTRACTS) return 'mission.limitReached';
+
+  const data = mission.data ?? {};
+  const stats = character.ship.stats ?? {};
+
+  if (data.goodId && data.qty) {
+    const good = goodById(Number(data.goodId));
+    const used = (character.cargo ?? []).reduce((sum, lot) => sum + lot.vol * lot.qty, 0);
+    const free = (stats.cargo ?? 0) - used;
+    if (good && good.vol * Number(data.qty) > free) return 'mission.missingCargo';
+  }
+  if (mission.type === 'passenger' && Number(data.count) > (stats.passengerBerths ?? 0)) {
+    return 'passenger.berths';
+  }
+  return null;
+}
+
 /** Whether the server would accept a completion right now. */
 function readyToComplete(mission, character) {
   const data = mission.data ?? {};
@@ -99,9 +127,10 @@ function readyToComplete(mission, character) {
   return Boolean(data.toPortId);
 }
 
-function missionCard(mission, { character, self, onAccept, onAbandon, onComplete }) {
+function missionCard(mission, { character, self, activeCount = 0, onAccept, onAbandon, onComplete }) {
   const deadline = remaining(mission.deadline);
   const ready = onComplete ? readyToComplete(mission, character) : false;
+  const blocked = onAccept ? blocker(mission, character, activeCount) : null;
 
   return h('div.card.card--tight', null,
     h('div.row.row--between', null,
@@ -113,8 +142,12 @@ function missionCard(mission, { character, self, onAccept, onAbandon, onComplete
         h('div.mono', null, tc(mission.reward)),
         deadline ? h('div.small.muted', null, deadline) : null)),
     ready ? h('div.small.good', null, t('mission.readyToComplete')) : null,
+    blocked ? h('div.small.muted', null, t(blocked)) : null,
     h('div.row', null,
-      onAccept ? h('button.ghost', { onClick: () => onAccept(mission) }, t('mission.accept')) : null,
+      onAccept
+        ? h('button.ghost', { disabled: Boolean(blocked), onClick: () => onAccept(mission) },
+          t('mission.accept'))
+        : null,
       onComplete
         ? h('button.primary', { disabled: !ready, onClick: () => onComplete(mission) }, t('mission.complete'))
         : null,
@@ -162,7 +195,10 @@ export function missionsView(ctx) {
           list.append(h('p.small.muted', null, t('error.notInPort')));
           return;
         }
-        const { missions } = await api.portMissions(character.worldId, character.portId);
+        const [{ missions }, { missions: active }] = await Promise.all([
+          api.portMissions(character.worldId, character.portId),
+          api.activeMissions(character.id),
+        ]);
         clear(list);
         if (!missions.length) {
           list.append(h('p.small.muted', null, t('mission.noneAtPort')));
@@ -172,6 +208,7 @@ export function missionsView(ctx) {
           list.append(missionCard(mission, {
             character,
             self: ctx.socket.self,
+            activeCount: active.length,
             onAccept: (m) => act('mission.accept', { missionId: m.id }, 'mission.accepted'),
           }));
         }

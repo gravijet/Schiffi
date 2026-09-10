@@ -16,6 +16,7 @@ import { isContraband } from '@schiffi/shared/data/factions.js';
 import { removeCargo, addCargo, cargoUsage } from './characters.js';
 import { awardXp } from './progression.js';
 import { audit } from '../services/audit.js';
+import { MAX_ACTIVE_CONTRACTS } from '@schiffi/shared/data/costs.js';
 
 export const MISSION_TYPES = ['delivery', 'passenger', 'bounty', 'exploration',
   'escort', 'salvage', 'supply', 'smuggle'];
@@ -264,7 +265,9 @@ export async function accept({ instance, characterId, userId, payload }) {
 
     const active = await tx.get(
       "SELECT COUNT(*) AS n FROM missions WHERE taken_by = ? AND status = 'taken'", [characterId]);
-    if (Number(active?.n ?? 0) >= 5) throw fail('error.validation', 'you already carry five contracts');
+    if (Number(active?.n ?? 0) >= MAX_ACTIVE_CONTRACTS) {
+      throw fail('mission.limitReached', `you already carry ${MAX_ACTIVE_CONTRACTS} contracts`);
+    }
 
     const data = JSON.parse(mission.data || '{}');
 

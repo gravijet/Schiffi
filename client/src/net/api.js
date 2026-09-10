@@ -144,6 +144,13 @@ export const api = {
   insurance: (characterId) => request(`/api/characters/${characterId}/insurance`),
   report: (data) => request('/api/reports', { method: 'POST', body: data }),
 
+  tutorial: (characterId) => request(`/api/characters/${characterId}/tutorial`),
+  skipTutorial: (characterId) =>
+    request(`/api/characters/${characterId}/tutorial/skip`, { method: 'POST' }),
+  resumeTutorial: (characterId) =>
+    request(`/api/characters/${characterId}/tutorial/resume`, { method: 'POST' }),
+  tutorialSteps: () => request('/api/data/tutorial'),
+
   // --- support, news and adverts -------------------------------------------
   createTicket: (data) => request('/api/support/tickets', { method: 'POST', body: data }),
   tickets: () => request('/api/support/tickets'),
