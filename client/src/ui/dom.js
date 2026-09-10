@@ -39,7 +39,22 @@ export function h(spec, props = null, ...children) {
       else if (key === 'style' && typeof value === 'object') Object.assign(element.style, value);
       else if (key === 'dataset') Object.assign(element.dataset, value);
       else if (key.startsWith('on') && typeof value === 'function') {
-        element.addEventListener(key.slice(2).toLowerCase(), value);
+        const eventName = key.slice(2).toLowerCase();
+        element.addEventListener(eventName, (event) => {
+          const result = value(event);
+          // Async controls acknowledge the click in the same frame. This is
+          // deliberately generic so login, admin and game actions all feel
+          // immediate even while the network request is still in flight.
+          if (eventName === 'click' && element.tagName === 'BUTTON' && result?.then) {
+            element.disabled = true;
+            element.classList.add('is-busy');
+            result.then(
+              () => { if (element.isConnected) { element.disabled = false; element.classList.remove('is-busy'); } },
+              () => { if (element.isConnected) { element.disabled = false; element.classList.remove('is-busy'); } },
+            );
+          }
+          return result;
+        });
       } else if (key === 'html') element.innerHTML = value;
       else if (key in element && key !== 'list' && typeof value !== 'object') element[key] = value;
       else element.setAttribute(key, value === true ? '' : value);
@@ -117,7 +132,7 @@ export function modal({ title, body, actions = [], wide = false, dismissable = t
     if (event.key === 'Escape' && dismissable) close(undefined);
   };
 
-  dialog.append(
+  add(dialog,
     h('div.modal__head', null,
       h('div.modal__title', null, title ?? ''),
       dismissable ? h('button.icon-btn', { onClick: () => close(undefined), title: 'Esc' }, '✕') : null),

@@ -15,6 +15,7 @@ import { Rng, seedFromString } from '@schiffi/shared/util/rng.js';
 import { getDatabase } from '../db/index.js';
 import config from '../config.js';
 import { seedMarketsForWorld } from './economy.js';
+import { randomBytes } from 'node:crypto';
 
 /** worldId -> live world instance. */
 const instances = new Map();
@@ -29,10 +30,12 @@ export function parseSeed(input) {
 }
 
 /** Create a new world row and build it. */
-export async function createWorld({ name, seed, maxPlayers, createdBy } = {}) {
+export async function createWorld({ name, seed, maxPlayers, createdBy, visibility = 'public' } = {}) {
   const db = getDatabase();
   const resolvedSeed = parseSeed(seed ?? config.game.defaultSeed);
   const now = Date.now();
+  const privacy = visibility === 'private' ? 'private' : 'public';
+  const inviteCode = privacy === 'private' ? await unusedInviteCode(db) : null;
 
   const worldId = await db.insert('worlds', {
     name: (name || `Welt ${resolvedSeed.toString(16).slice(0, 6)}`).slice(0, 60),
@@ -45,7 +48,14 @@ export async function createWorld({ name, seed, maxPlayers, createdBy } = {}) {
     season: 0,
     settings: '{}',
     max_players: maxPlayers ?? config.game.maxPlayersPerWorld,
+    creator_user_id: createdBy ?? null,
+    visibility: privacy,
+    invite_code: inviteCode,
   });
+
+  if (createdBy) {
+    await db.insert('world_members', { world_id: worldId, user_id: createdBy, joined_at: now });
+  }
 
   const instance = await loadWorld(worldId);
 
@@ -58,7 +68,18 @@ export async function createWorld({ name, seed, maxPlayers, createdBy } = {}) {
   }
   await seedMarketsForWorld(instance);
 
+  instance.visibility = privacy;
+  instance.creatorUserId = createdBy ?? null;
+  instance.inviteCode = inviteCode;
   return instance;
+}
+
+async function unusedInviteCode(db) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const code = randomBytes(6).toString('base64url').toUpperCase().replace(/[-_]/g, '').slice(0, 8);
+    if (code.length >= 6 && !(await db.get('SELECT 1 AS x FROM worlds WHERE invite_code = ?', [code]))) return code;
+  }
+  throw new Error('could not allocate an invite code');
 }
 
 /** Build (or return) the in-memory instance for a world row. */
@@ -93,6 +114,9 @@ export async function loadWorld(worldId) {
     tick: Number(row.tick),
     gameTimeMs: Number(row.game_time_ms),
     createdAt: Number(row.created_at),
+    visibility: row.visibility ?? 'public',
+    creatorUserId: row.creator_user_id ?? null,
+    inviteCode: row.invite_code ?? null,
     world,
     portsById: new Map(world.ports.map((p) => [p.id, p])),
     islandsById: new Map(world.islands.map((i) => [i.id, i])),
@@ -118,9 +142,14 @@ export function loadedWorlds() {
   return [...instances.values()];
 }
 
-export async function listWorlds() {
+export async function listWorlds(userId = null) {
   const db = getDatabase();
-  const rows = await db.all('SELECT * FROM worlds ORDER BY created_at');
+  const rows = userId
+    ? await db.all(
+      "SELECT * FROM worlds WHERE visibility = 'public' OR creator_user_id = ? " +
+      'OR id IN (SELECT world_id FROM world_members WHERE user_id = ?) ORDER BY created_at DESC',
+      [userId, userId])
+    : await db.all("SELECT * FROM worlds WHERE visibility = 'public' ORDER BY created_at DESC");
   const counts = await db.all(
     'SELECT world_id, COUNT(*) AS n FROM characters WHERE deleted_at IS NULL GROUP BY world_id');
   const countMap = new Map(counts.map((r) => [String(r.world_id), Number(r.n)]));
@@ -137,8 +166,34 @@ export async function listWorlds() {
       online: live ? live.players.size : 0,
       createdAt: Number(r.created_at),
       loaded: Boolean(live),
+      visibility: r.visibility ?? 'public',
+      owner: userId !== null && String(r.creator_user_id) === String(userId),
+      inviteCode: userId !== null && String(r.creator_user_id) === String(userId) ? r.invite_code : null,
     };
   });
+}
+
+export async function canAccessWorld(worldId, userId) {
+  const db = getDatabase();
+  const world = await db.get('SELECT id, visibility, creator_user_id FROM worlds WHERE id = ?', [worldId]);
+  if (!world) return false;
+  if ((world.visibility ?? 'public') === 'public') return true;
+  if (!userId) return false;
+  if (String(world.creator_user_id) === String(userId)) return true;
+  return Boolean(await db.get('SELECT 1 AS x FROM world_members WHERE world_id = ? AND user_id = ?',
+    [worldId, userId]));
+}
+
+export async function joinWorldByCode(code, userId) {
+  const db = getDatabase();
+  const normal = String(code ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const world = await db.get(
+    "SELECT * FROM worlds WHERE invite_code = ? AND visibility = 'private' AND status = 'open'", [normal]);
+  if (!world) return null;
+  const joined = await db.get('SELECT 1 AS x FROM world_members WHERE world_id = ? AND user_id = ?',
+    [world.id, userId]);
+  if (!joined) await db.insert('world_members', { world_id: world.id, user_id: userId, joined_at: Date.now() });
+  return { id: world.id, name: world.name };
 }
 
 /**

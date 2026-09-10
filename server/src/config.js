@@ -112,6 +112,12 @@ export const config = {
     maxPlayersPerWorld: num(process.env.MAX_PLAYERS_PER_WORLD, 400),
     startingCoins: num(process.env.STARTING_COINS, 5),
     newbieProtectionMinutes: num(process.env.NEWBIE_PROTECTION_MINUTES, 90),
+    // Watching a 'reward'-placement advert to the end pays this many coins,
+    // no more often than once per cooldown - a captain grinding the button
+    // is worth less to the till than one real advertiser impression.
+    adRewardCoins: num(process.env.AD_REWARD_COINS, 60),
+    adRewardCooldownSeconds: num(process.env.AD_REWARD_COOLDOWN_SECONDS, 240),
+    adRewardWatchSeconds: num(process.env.AD_REWARD_WATCH_SECONDS, 15),
   },
 
   uploads: {
@@ -119,6 +125,7 @@ export const config = {
     // the writable directories somewhere else entirely.
     dir: resolve(ROOT, process.env.UPLOADS_DIR || 'data/uploads'),
     maxAvatarBytes: num(process.env.MAX_AVATAR_BYTES, 512 * 1024),
+    maxMediaBytes: num(process.env.MAX_MEDIA_BYTES, 1024 * 1024 * 1024),
   },
 };
 

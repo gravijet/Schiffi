@@ -15,8 +15,9 @@ import * as auth from '../services/auth.js';
 import { PERMISSIONS } from '../services/permissions.js';
 import { getDatabase } from '../db/index.js';
 import { badRequest, notFound } from '../http/respond.js';
+import { levelForXp } from '../game/progression.js';
 
-export function registerAdminRoutes(router) {
+export function registerAdminRoutes(router, { gateway } = {}) {
   // --- permissions and roles ---------------------------------------------
   router.get('/api/admin/permissions', async () => ({
     permissions: PERMISSIONS,
@@ -139,4 +140,52 @@ export function registerAdminRoutes(router) {
     await auth.deleteAccount(ctx.params.id, { actor: { ...ctx.actor, staff: true } });
     return { ok: true };
   }, { permission: 'users.delete' });
+
+  // --- live character economy -------------------------------------------
+  router.patch('/api/admin/characters/:id/economy', async (ctx) => {
+    const body = await ctx.body();
+    const coins = Math.trunc(Number(body.coins ?? 0));
+    const bank = Math.trunc(Number(body.bank ?? 0));
+    const xp = Math.trunc(Number(body.xp ?? 0));
+    if (![coins, bank, xp].every(Number.isSafeInteger)) throw badRequest();
+    if ([coins, bank, xp].some((value) => Math.abs(value) > 1_000_000_000_000)) throw badRequest();
+    if (coins === 0 && bank === 0 && xp === 0) throw badRequest();
+
+    const db = getDatabase();
+    const updated = await db.tx(async (tx) => {
+      const row = await tx.get(
+        'SELECT id, coins, bank_balance, xp FROM characters WHERE id = ? AND deleted_at IS NULL',
+        [ctx.params.id]);
+      if (!row) throw notFound();
+
+      // Bind absolute, non-negative values. Apart from making the update easy
+      // to reason about, this avoids driver-specific handling of very large
+      // negative integer parameters.
+      const add = (current, delta) => Math.min(Number.MAX_SAFE_INTEGER,
+        Math.max(0, Number(current) + delta));
+      const nextCoins = add(row.coins, coins);
+      const nextBank = add(row.bank_balance, bank);
+      const nextXp = add(row.xp, xp);
+      const nextLevel = levelForXp(nextXp);
+      await tx.run(
+        'UPDATE characters SET coins = ?, bank_balance = ?, xp = ?, level = ? WHERE id = ?',
+        [nextCoins, nextBank, nextXp, nextLevel, row.id]);
+      return tx.get('SELECT id, coins, bank_balance, xp, level FROM characters WHERE id = ?', [row.id]);
+    });
+
+    // Keep an online player's HUD in sync instead of waiting for reconnect.
+    const conn = [...(gateway?.connections ?? [])]
+      .find((entry) => String(entry.player?.characterId) === String(updated.id));
+    if (conn) {
+      const { loadCharacter } = await import('../game/characters.js');
+      conn.send({ t: 'event', kind: 'characterUpdate', character: await loadCharacter(updated.id) });
+    }
+    return {
+      applied: { coins, bank, xp },
+      character: {
+        id: updated.id, coins: Number(updated.coins), bank: Number(updated.bank_balance),
+        xp: Number(updated.xp), level: Number(updated.level),
+      },
+    };
+  }, { permission: 'world.grant' });
 }

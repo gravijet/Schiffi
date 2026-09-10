@@ -269,9 +269,13 @@ export function adsTab(can) {
             h('div.grow', null,
               h('div', null, ad.title),
               h('div.small.muted', null, ad.targetUrl),
-              h('div.small.muted', null,
-                t('ads.stats', { impressions: ad.impressions, clicks: ad.clicks }))),
+              h('div.small.muted', null, t(`ads.placement.${ad.placement}`)),
+              h('div.small.muted', null, ad.placement === 'reward'
+                ? t('ads.statsReward', { impressions: ad.impressions, completions: ad.completions ?? 0 })
+                : t('ads.stats', { impressions: ad.impressions, clicks: ad.clicks }))),
             h('span.small', null, t(`ads.${ad.status}`))),
+          ad.video ? h('video.ad-card__image', { src: ad.video, controls: true, preload: 'metadata' })
+            : ad.image ? h('img.ad-card__image', { src: ad.image, alt: '', loading: 'lazy' }) : null,
           h('p.small', { style: { whiteSpace: 'pre-wrap' } }, ad.body),
           can('ads.approve')
             ? h('div.stack', null,

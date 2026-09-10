@@ -11,16 +11,14 @@
  * not to be trusted with that.
  */
 import { normalize } from '@schiffi/shared/util/math.js';
+import { CELL_SIZE, NAVIGABLE } from '@schiffi/shared/world/constants.js';
 
-const KEY_BINDINGS = {
-  up: ['ArrowUp', 'KeyW'],
-  down: ['ArrowDown', 'KeyS'],
-  left: ['ArrowLeft', 'KeyA'],
-  right: ['ArrowRight', 'KeyD'],
-};
+// Sailing is point-and-click. Keyboard events remain available for shortcuts,
+// but WASD/arrow keys no longer turn the ship into a twin-stick vehicle.
+const KEY_BINDINGS = {};
 
 export class InputManager extends EventTarget {
-  constructor({ settings }) {
+  constructor({ settings, position, terrain }) {
     super();
     this.settings = settings;
     this.keys = new Set();
@@ -30,6 +28,10 @@ export class InputManager extends EventTarget {
     this.touchActive = false;
     this.touchVector = { x: 0, y: 0 };
     this.enabled = true;
+    this.position = position;
+    this.terrain = terrain;
+    this.destination = null;
+    this.avoidSign = 0;
 
     this._onKeyDown = (event) => this.onKeyDown(event);
     this._onKeyUp = (event) => this.onKeyUp(event);
@@ -126,6 +128,24 @@ export class InputManager extends EventTarget {
       this.source = 'touch';
       return this.vector;
     }
+    if (this.destination) {
+      const current = this.position?.();
+      if (current) {
+        const dx = this.destination.x - current.x;
+        const dy = this.destination.y - current.y;
+        const distance = Math.hypot(dx, dy);
+        if (distance <= 28) {
+          this.destination = null;
+          this.vector = { x: 0, y: 0 };
+          this.dispatchEvent(new CustomEvent('destination', { detail: null }));
+        } else {
+          const [x, y] = normalize(dx, dy);
+          this.vector = this.steerAroundLand(current, { x, y }, distance);
+          this.source = 'pointer';
+        }
+        return this.vector;
+      }
+    }
     if (this.gamepadIndex !== null) {
       const pad = navigator.getGamepads?.()[this.gamepadIndex];
       if (pad?.connected) {
@@ -165,6 +185,78 @@ export class InputManager extends EventTarget {
     this.vector = { x: nx, y: ny };
   }
 
+  setDestination(point) {
+    this.destination = point && Number.isFinite(point.x) && Number.isFinite(point.y)
+      ? this.nearestWater(point) : null;
+    this.avoidSign = 0;
+    this.keys.clear();
+    this.dispatchEvent(new CustomEvent('destination', { detail: this.destination }));
+  }
+
+  /** Keep click-to-sail useful when the direct line brushes an island. */
+  steerAroundLand(current, desired, distance) {
+    if (!this.terrain || this.waterAhead(current, desired, Math.min(distance, 110))) {
+      this.avoidSign = 0;
+      return desired;
+    }
+    const base = Math.atan2(desired.y, desired.x);
+    const signs = this.avoidSign ? [this.avoidSign, -this.avoidSign] : [1, -1];
+    for (let degrees = 15; degrees <= 165; degrees += 15) {
+      for (const sign of signs) {
+        const angle = base + sign * degrees * Math.PI / 180;
+        const candidate = { x: Math.cos(angle), y: Math.sin(angle) };
+        if (this.waterAhead(current, candidate, 110)) {
+          this.avoidSign = sign;
+          return candidate;
+        }
+      }
+    }
+    return { x: 0, y: 0 };
+  }
+
+  waterAhead(current, vector, distance) {
+    const steps = Math.max(1, Math.ceil(distance / CELL_SIZE));
+    for (let step = 1; step <= steps; step++) {
+      const scale = Math.min(distance, step * CELL_SIZE);
+      if (!this.isWater(current.x + vector.x * scale, current.y + vector.y * scale)) return false;
+    }
+    return true;
+  }
+
+  isWater(x, y) {
+    const terrain = this.terrain;
+    if (!terrain) return true;
+    const cx = Math.floor(x / terrain.cellSize);
+    const cy = Math.floor(y / terrain.cellSize);
+    if (cx < 0 || cy < 0 || cx >= terrain.width || cy >= terrain.height) return false;
+    return Boolean(NAVIGABLE[terrain.cells[cy * terrain.width + cx]]);
+  }
+
+  /** A click on the shore targets the closest navigable cell, not dry land. */
+  nearestWater(point) {
+    if (!this.terrain || this.isWater(point.x, point.y)) return { x: point.x, y: point.y };
+    const { width, height, cellSize } = this.terrain;
+    const originX = Math.max(0, Math.min(width - 1, Math.floor(point.x / cellSize)));
+    const originY = Math.max(0, Math.min(height - 1, Math.floor(point.y / cellSize)));
+    for (let radius = 1; radius <= 64; radius++) {
+      for (let x = originX - radius; x <= originX + radius; x++) {
+        for (const y of [originY - radius, originY + radius]) {
+          if (this.isWater((x + 0.5) * cellSize, (y + 0.5) * cellSize)) {
+            return { x: (x + 0.5) * cellSize, y: (y + 0.5) * cellSize };
+          }
+        }
+      }
+      for (let y = originY - radius + 1; y < originY + radius; y++) {
+        for (const x of [originX - radius, originX + radius]) {
+          if (this.isWater((x + 0.5) * cellSize, (y + 0.5) * cellSize)) {
+            return { x: (x + 0.5) * cellSize, y: (y + 0.5) * cellSize };
+          }
+        }
+      }
+    }
+    return null;
+  }
+
   // --- virtual joystick ----------------------------------------------------
 
   attachJoystick(element) {
@@ -196,6 +288,7 @@ export class InputManager extends EventTarget {
       pointerId = event.pointerId;
       element.setPointerCapture(pointerId);
       this.touchActive = true;
+      this.destination = null;
       setFrom(event.clientX, event.clientY);
       event.preventDefault();
     };

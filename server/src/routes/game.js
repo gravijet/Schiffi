@@ -5,7 +5,7 @@
  * price history); everything that *changes* game state goes through the
  * WebSocket action channel so it runs against the live simulation.
  */
-import { listWorlds, loadWorld, getLoadedWorld, worldMeta, terrainBlob, createWorld } from '../game/worldManager.js';
+import { listWorlds, loadWorld, getLoadedWorld, worldMeta, terrainBlob, createWorld, canAccessWorld, joinWorldByCode } from '../game/worldManager.js';
 import { listCharacters, createCharacter, loadCharacter } from '../game/characters.js';
 import { worldPortrait } from '../game/mapImage.js';
 import { marketFor, priceStats } from '../game/economy.js';
@@ -22,7 +22,7 @@ import { FACTIONS } from '@schiffi/shared/data/factions.js';
 import { notFound, badRequest, forbidden } from '../http/respond.js';
 import { WORLDGEN_VERSION } from '@schiffi/shared/world/constants.js';
 
-export function registerGameRoutes(router, { simulations }) {
+export function registerGameRoutes(router, { simulations, startWorld }) {
   // --- static game data (cacheable, identical for everyone) ---------------
   router.get('/api/data/goods', async (ctx) => {
     const lang = ctx.query.lang;
@@ -59,18 +59,37 @@ export function registerGameRoutes(router, { simulations }) {
     { permission: 'system.status' });
 
   // --- worlds --------------------------------------------------------------
-  router.get('/api/worlds', async () => ({ worlds: await listWorlds(), worldgenVersion: WORLDGEN_VERSION }),
+  router.get('/api/worlds', async (ctx) => ({ worlds: await listWorlds(ctx.user?.id), worldgenVersion: WORLDGEN_VERSION }),
     { auth: false });
 
   router.post('/api/worlds', async (ctx) => {
     const body = await ctx.body();
+    const name = String(body.name ?? '').trim();
+    if (name.length < 3 || name.length > 60) throw badRequest();
+    const db = getDatabase();
+    const owned = await db.get('SELECT COUNT(*) AS n FROM worlds WHERE creator_user_id = ?', [ctx.user.id]);
+    if (Number(owned?.n ?? 0) >= 3) throw badRequest('error.rateLimited');
     const instance = await createWorld({
-      name: body.name, seed: body.seed, maxPlayers: body.maxPlayers, createdBy: ctx.user.id,
+      name, seed: body.seed,
+      maxPlayers: Math.min(100, Math.max(2, Number(body.maxPlayers) || 20)),
+      createdBy: ctx.user.id, visibility: body.visibility,
     });
-    return { id: instance.id, name: instance.name, seed: instance.seed, buildMs: instance.buildMs };
-  }, { permission: 'world.manage' });
+    await startWorld?.(instance);
+    return {
+      id: instance.id, name: instance.name, seed: instance.seed, buildMs: instance.buildMs,
+      visibility: instance.visibility, inviteCode: instance.inviteCode,
+    };
+  });
+
+  router.post('/api/worlds/join', async (ctx) => {
+    const body = await ctx.body();
+    const world = await joinWorldByCode(body.code, ctx.user.id);
+    if (!world) throw notFound('error.worldNotFound');
+    return { world };
+  });
 
   router.get('/api/worlds/:id', async (ctx) => {
+    if (!(await canAccessWorld(ctx.params.id, ctx.user?.id))) throw notFound();
     const instance = getLoadedWorld(ctx.params.id) ?? await loadWorld(ctx.params.id);
     ctx.res.setHeader('Cache-Control', 'private, max-age=300');
     return worldMeta(instance);
@@ -81,6 +100,7 @@ export function registerGameRoutes(router, { simulations }) {
    * it may be cached forever under a seed-and-version keyed ETag.
    */
   router.get('/api/worlds/:id/terrain', async (ctx) => {
+    if (!(await canAccessWorld(ctx.params.id, ctx.user?.id))) throw notFound();
     const instance = getLoadedWorld(ctx.params.id) ?? await loadWorld(ctx.params.id);
     const accept = ctx.req.headers['accept-encoding'] ?? '';
     const encoding = /\bbr\b/.test(accept) ? 'br' : 'gzip';
@@ -111,6 +131,7 @@ export function registerGameRoutes(router, { simulations }) {
    * dark palettes are different pictures, not the same picture tinted.
    */
   router.get('/api/worlds/:id/portrait.png', async (ctx) => {
+    if (!(await canAccessWorld(ctx.params.id, ctx.user?.id))) throw notFound();
     const instance = getLoadedWorld(ctx.params.id) ?? await loadWorld(ctx.params.id);
     const theme = ctx.query.theme === 'light' ? 'light' : 'dark';
     const body = worldPortrait(instance, theme);
@@ -131,6 +152,7 @@ export function registerGameRoutes(router, { simulations }) {
   }, { auth: false });
 
   router.get('/api/worlds/:id/status', async (ctx) => {
+    if (!(await canAccessWorld(ctx.params.id, ctx.user?.id))) throw notFound();
     const instance = getLoadedWorld(ctx.params.id);
     const simulation = simulations.get(String(ctx.params.id));
     if (!instance) return { loaded: false };
@@ -148,6 +170,7 @@ export function registerGameRoutes(router, { simulations }) {
   }, { auth: false });
 
   router.get('/api/worlds/:id/weather', async (ctx) => {
+    if (!(await canAccessWorld(ctx.params.id, ctx.user?.id))) throw notFound();
     const instance = getLoadedWorld(ctx.params.id) ?? await loadWorld(ctx.params.id);
     const simulation = simulations.get(String(ctx.params.id));
     if (!simulation) throw notFound();
@@ -161,6 +184,7 @@ export function registerGameRoutes(router, { simulations }) {
 
   router.post('/api/characters', async (ctx) => {
     const body = await ctx.body();
+    if (!(await canAccessWorld(body.worldId, ctx.user.id))) throw notFound();
     const instance = getLoadedWorld(body.worldId) ?? await loadWorld(body.worldId);
     const id = await createCharacter({
       userId: ctx.user.id, worldId: instance.id, name: body.name, mode: body.mode ?? 'trader',
@@ -183,6 +207,7 @@ export function registerGameRoutes(router, { simulations }) {
 
   // --- ports and markets ---------------------------------------------------
   router.get('/api/worlds/:worldId/ports/:portId', async (ctx) => {
+    if (!(await canAccessWorld(ctx.params.worldId, ctx.user?.id))) throw notFound();
     const instance = getLoadedWorld(ctx.params.worldId) ?? await loadWorld(ctx.params.worldId);
     const port = instance.portsById.get(ctx.params.portId);
     if (!port) throw notFound();
@@ -211,6 +236,7 @@ export function registerGameRoutes(router, { simulations }) {
   });
 
   router.get('/api/worlds/:worldId/ports/:portId/prices/:goodId', async (ctx) => {
+    if (!(await canAccessWorld(ctx.params.worldId, ctx.user?.id))) throw notFound();
     const instance = getLoadedWorld(ctx.params.worldId) ?? await loadWorld(ctx.params.worldId);
     const good = goodById(Number(ctx.params.goodId));
     if (!good) throw notFound();
@@ -235,6 +261,7 @@ export function registerGameRoutes(router, { simulations }) {
 
   // --- leaderboards --------------------------------------------------------
   router.get('/api/worlds/:worldId/leaderboard', async (ctx) => {
+    if (!(await canAccessWorld(ctx.params.worldId, ctx.user?.id))) throw notFound();
     const db = getDatabase();
     const board = ctx.query.board ?? 'wealth';
     const limit = Math.min(100, Number(ctx.query.limit) || 25);
@@ -263,6 +290,7 @@ export function registerGameRoutes(router, { simulations }) {
 
   // --- discoveries ---------------------------------------------------------
   router.get('/api/worlds/:worldId/discoveries', async (ctx) => {
+    if (!(await canAccessWorld(ctx.params.worldId, ctx.user?.id))) throw notFound();
     const db = getDatabase();
     const rows = await db.all(
       'SELECT * FROM island_discoveries WHERE world_id = ? ORDER BY discovered_at DESC LIMIT 200',

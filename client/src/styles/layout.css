@@ -83,7 +83,7 @@
 .chat-msg--guild  .chat-msg__from { color: #b184d8; }
 .chat-msg--private .chat-msg__from { color: var(--warn); }
 .chat-msg--system { color: var(--parchment-dim); font-style: italic; }
-.chat-msg mark { background: rgba(201,162,39,0.28); color: inherit; border-radius: 2px; padding: 0 2px; }
+.chat-msg mark { background: rgba(22, 199, 154,0.28); color: inherit; border-radius: 2px; padding: 0 2px; }
 
 /* --- virtual joystick ---------------------------------------------------- */
 #joystick {
@@ -96,7 +96,7 @@
 #joystick .knob {
   position: absolute; left: 50%; top: 50%;
   width: 46px; height: 46px; margin: -23px 0 0 -23px;
-  border-radius: 50%; background: rgba(201,162,39,0.55);
+  border-radius: 50%; background: rgba(22, 199, 154,0.55);
   border: 1px solid var(--brass-400);
 }
 :root[data-touch="on"] #joystick { display: block; }
@@ -106,7 +106,7 @@
 .lang-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; text-align: left; }
 .lang-btn .native { font-size: 14px; color: var(--parchment); }
 .lang-btn .english { font-size: 11px; color: var(--parchment-dim); }
-.lang-btn.is-active { border-color: var(--brass-500); background: rgba(201,162,39,0.12); }
+.lang-btn.is-active { border-color: var(--brass-500); background: rgba(22, 199, 154,0.12); }
 
 /* --- the site outside the game ------------------------------------------- */
 /*
@@ -138,7 +138,7 @@
 #menu-screen::after {
   content: ''; position: fixed; inset: 0; z-index: -1;
   background:
-    radial-gradient(ellipse at 70% 0%, rgba(240, 212, 120, 0.1) 0%, transparent 55%),
+    radial-gradient(ellipse at 70% 0%, rgba(53, 214, 180, 0.1) 0%, transparent 55%),
     radial-gradient(ellipse at 20% 30%, rgba(5, 12, 18, 0.86) 0%, rgba(5, 12, 18, 0.45) 55%, transparent 80%),
     linear-gradient(180deg, rgba(5, 12, 18, 0.55) 0%, rgba(5, 12, 18, 0.62) 45%, rgba(5, 12, 18, 0.88) 100%);
 }
@@ -146,8 +146,8 @@
 :root[data-theme="light"] #menu-screen::before { opacity: 0.6; }
 :root[data-theme="light"] #menu-screen::after {
   background:
-    radial-gradient(ellipse at 70% 0%, rgba(138, 109, 18, 0.08) 0%, transparent 55%),
-    linear-gradient(180deg, rgba(244, 241, 232, 0.86) 0%, rgba(244, 241, 232, 0.94) 40%, rgba(244, 241, 232, 0.99) 100%);
+    radial-gradient(ellipse at 70% 0%, rgba(8, 127, 102, 0.08) 0%, transparent 55%),
+    linear-gradient(180deg, rgba(242, 247, 247, 0.86) 0%, rgba(242, 247, 247, 0.94) 40%, rgba(242, 247, 247, 0.99) 100%);
 }
 
 /* --- header --------------------------------------------------------------- */
@@ -244,6 +244,15 @@
 .card--pick.is-active { border-color: var(--brass-500); background: var(--accent-soft); }
 
 .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--gap); }
+.world-tools { margin-bottom: 20px; }
+.world-card { display: grid; grid-template-columns: 1fr auto; gap: 10px 16px; align-items: center; }
+.world-card > .row { grid-column: 1 / -1; }
+.invite-code { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.invite-code code {
+  font: var(--mono); font-size: 14px; letter-spacing: .12em; color: var(--brass-300);
+  border: 1px solid var(--site-card-border); border-radius: var(--radius); padding: 5px 8px;
+}
+.world-live { grid-column: 1 / -1; border-top: 1px solid var(--site-card-border); padding-top: 8px; }
 .kv { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; font-size: 12px; }
 .kv dt { color: var(--parchment-dim); } .kv dd { margin: 0; text-align: right; font: var(--mono); }
 
@@ -285,6 +294,7 @@
   width: 100%; max-height: 300px; object-fit: contain;
   border-radius: var(--radius); margin-bottom: 18px; display: block;
 }
+.promo video.promo__image { background: #000; }
 .promo__headline { margin: 0 0 8px; font-size: 25px; font-weight: 700; }
 .promo__body { margin: 0 0 20px; color: var(--parchment-dim); white-space: pre-wrap; }
 .promo__actions { display: flex; gap: var(--gap); justify-content: center; flex-wrap: wrap; }
@@ -429,6 +439,10 @@
 .lead-action p { margin: 8px 0 0; max-width: 52ch; }
 
 /* --- footer and the adverts in it ---------------------------------------- */
+.site-ad-rail {
+  max-width: 1140px; width: 100%; margin: 14px auto 0; padding: 0 20px;
+}
+.site-ad-rail:empty { display: none; }
 .site-footer {
   max-width: 1140px; width: 100%; margin: 0 auto;
   padding: 0 20px calc(24px + var(--safe-bottom));
@@ -455,8 +469,8 @@
   border-radius: var(--radius); background: var(--sea-800);
 }
 .site-ads__label {
-  grid-column: 1 / -1; text-transform: uppercase; letter-spacing: 0.08em;
-  font-size: 10px; opacity: 0.6;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  font-size: 10px; opacity: 0.6; margin: 0 0 5px 2px;
 }
 
 /* --- landing page --------------------------------------------------------- */

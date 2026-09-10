@@ -55,8 +55,27 @@ function heading(fromX, fromY, toX, toY) {
   };
 }
 
+/**
+ * Where the destination port actually is, said the way a sailor would.
+ *
+ * A contract only ever told the client a port's name, which means nothing
+ * until the player has already visited it once. The world meta the client
+ * already holds has every port's position and the island it sits on, so this
+ * turns a bare name into a heading, a distance and - when the client bothered
+ * to keep it - the island to look for it on.
+ */
+function toward(toPortId, toPortName, self, world) {
+  const port = world?.ports?.find((p) => p.id === toPortId);
+  const island = port ? world.islands?.find((isl) => isl.id === port.islandId) : null;
+  const place = island?.name && island.name !== toPortName
+    ? `${toPortName} (${island.name})` : toPortName;
+  if (!self || !port) return place;
+  const { bearing, distance } = heading(self.x, self.y, port.x, port.y);
+  return `${place} · ${t('mission.heading', { bearing, distance })}`;
+}
+
 /** One line describing what a contract asks for, per type. */
-function requirement(mission, self) {
+function requirement(mission, self, world) {
   const data = mission.data ?? {};
   const area = (x, y) => {
     if (!self) return '';
@@ -68,11 +87,11 @@ function requirement(mission, self) {
     case 'delivery':
     case 'supply':
     case 'smuggle':
-      return `${data.qty}× ${goodName(data.goodId)} → ${data.toPortName}`;
+      return `${data.qty}× ${goodName(data.goodId)} → ${toward(data.toPortId, data.toPortName, self, world)}`;
     case 'passenger':
-      return `${data.count}× ${t('passenger.title')} → ${data.toPortName}`;
+      return `${data.count}× ${t('passenger.title')} → ${toward(data.toPortId, data.toPortName, self, world)}`;
     case 'escort':
-      return `→ ${data.toPortName}`;
+      return `→ ${toward(data.toPortId, data.toPortName, self, world)}`;
     case 'exploration':
       return `${t('explore.undiscovered')} · ${area(data.hintX, data.hintY)}`;
     case 'salvage':
@@ -127,7 +146,7 @@ function readyToComplete(mission, character) {
   return Boolean(data.toPortId);
 }
 
-function missionCard(mission, { character, self, activeCount = 0, onAccept, onAbandon, onComplete }) {
+function missionCard(mission, { character, self, world, activeCount = 0, onAccept, onAbandon, onComplete }) {
   const deadline = remaining(mission.deadline);
   const ready = onComplete ? readyToComplete(mission, character) : false;
   const blocked = onAccept ? blocker(mission, character, activeCount) : null;
@@ -137,7 +156,7 @@ function missionCard(mission, { character, self, activeCount = 0, onAccept, onAb
       h('div.grow', null,
         h('div', null, t(`mission.types.${mission.type}`),
           mission.data?.risk ? h('span.bad.small', null, ' ⚑') : null),
-        h('div.small.muted', null, requirement(mission, self))),
+        h('div.small.muted', null, requirement(mission, self, world))),
       h('div.right', null,
         h('div.mono', null, tc(mission.reward)),
         deadline ? h('div.small.muted', null, deadline) : null)),
@@ -208,6 +227,7 @@ export function missionsView(ctx) {
           list.append(missionCard(mission, {
             character,
             self: ctx.socket.self,
+            world: ctx.world,
             activeCount: active.length,
             onAccept: (m) => act('mission.accept', { missionId: m.id }, 'mission.accepted'),
           }));
@@ -223,6 +243,7 @@ export function missionsView(ctx) {
           list.append(missionCard(mission, {
             character,
             self: ctx.socket.self,
+            world: ctx.world,
             onComplete: (m) => act('mission.complete', { missionId: m.id }, 'mission.completed'),
             onAbandon: async (m) => {
               const yes = await confirmDialog({

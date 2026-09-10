@@ -50,6 +50,7 @@ let session = { cookie: null, token: null };
 // The superadmin's session, kept aside: several tests register further
 // accounts, and registering signs you in as the account you just made.
 let rootCookie = null;
+let guestCookie = null;
 
 before(async () => {
   const { bootstrap } = await import('../src/index.js');
@@ -130,6 +131,23 @@ test('a duplicate username is rejected', async () => {
   });
   assert.equal(status, 409);
   assert.equal(body.code, 'error.usernameTaken');
+});
+
+test('guest play creates a signed-in account with a generated nickname', async () => {
+  session.cookie = null;
+  const created = await api('/api/auth/guest', {
+    method: 'POST', body: { locale: 'de' },
+  });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  assert.match(created.body.username, /^[\p{L}\p{N}][\p{L}\p{N}_. -]{1,23}$/u);
+  guestCookie = session.cookie;
+
+  const me = await api('/api/auth/me');
+  assert.equal(me.status, 200);
+  assert.equal(me.body.user.guest, true);
+  assert.equal(me.body.user.email, null);
+  assert.equal(me.body.user.emailVerified, true);
+  session.cookie = rootCookie;
 });
 
 /**
@@ -791,6 +809,95 @@ test('the vault stores ciphertext, never the password itself', async () => {
   }
 });
 
+test('private player worlds stay hidden until their share code is used', async () => {
+  session.cookie = rootCookie;
+  const created = await api('/api/worlds', {
+    method: 'POST',
+    body: { name: 'Verborgene See', seed: 987654321, maxPlayers: 12, visibility: 'private' },
+  });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  assert.equal(created.body.visibility, 'private');
+  assert.match(created.body.inviteCode, /^[A-Z0-9]{6,8}$/);
+  const privateId = created.body.id;
+
+  session.cookie = null;
+  const anonymous = await api('/api/worlds');
+  assert.ok(!anonymous.body.worlds.some((world) => String(world.id) === String(privateId)));
+  const anonymousStatus = await api(`/api/worlds/${privateId}/status`);
+  assert.equal(anonymousStatus.status, 404);
+
+  session.cookie = guestCookie;
+  const before = await api(`/api/worlds/${privateId}`);
+  assert.equal(before.status, 404);
+  const joined = await api('/api/worlds/join', {
+    method: 'POST', body: { code: created.body.inviteCode.toLowerCase() },
+  });
+  assert.equal(joined.status, 200, JSON.stringify(joined.body));
+  const visible = await api('/api/worlds');
+  assert.ok(visible.body.worlds.some((world) => String(world.id) === String(privateId)));
+  const status = await api(`/api/worlds/${privateId}/status`);
+  assert.equal(status.status, 200);
+  assert.equal(status.body.loaded, true);
+  session.cookie = rootCookie;
+});
+
+test('superadmin runtime settings persist secrets encrypted and apply immediately', async () => {
+  const updated = await api('/api/superadmin/settings', {
+    method: 'PATCH',
+    body: {
+      mail: { host: 'smtp.test.invalid', port: 465, secure: true, user: 'mailer', pass: 'smtp-secret', from: 'Schiffi <mail@test.invalid>' },
+      uploads: { maxMediaMiB: 1024 },
+      game: { startingCoins: 7, maxPlayersPerWorld: 300, newbieProtectionMinutes: 120 },
+    },
+  });
+  assert.equal(updated.status, 200, JSON.stringify(updated.body));
+  assert.equal(updated.body.settings.uploads.maxMediaMiB, 1024);
+  assert.equal(updated.body.settings.game.startingCoins, 7);
+  assert.equal(updated.body.settings.mail.passwordConfigured, true);
+  assert.ok(!updated.text.includes('smtp-secret'));
+
+  const { getDatabase } = await import('../src/db/index.js');
+  const stored = await getDatabase().get("SELECT value, secret FROM system_settings WHERE key = 'mail.pass'");
+  assert.equal(Boolean(stored.secret), true);
+  assert.match(stored.value, /^v1\./);
+  assert.ok(!stored.value.includes('smtp-secret'));
+
+  // Keep the remainder of this isolated suite on the mail spool; the setting
+  // test must not turn later account registrations into real network calls.
+  const restored = await api('/api/superadmin/settings', {
+    method: 'PATCH', body: { mail: { host: '' } },
+  });
+  assert.equal(restored.status, 200);
+});
+
+test('an administrator can adjust a character economy without making it negative', async () => {
+  session.cookie = rootCookie;
+  const before = await api(`/api/characters/${characterId}`);
+  const granted = await api(`/api/admin/characters/${characterId}/economy`, {
+    method: 'PATCH', body: { coins: 321, bank: 12, xp: 5 },
+  });
+  assert.equal(granted.status, 200, JSON.stringify(granted.body));
+  assert.equal(granted.body.character.coins, before.body.coins + 321);
+
+  const clamped = await api(`/api/admin/characters/${characterId}/economy`, {
+    method: 'PATCH', body: { coins: -1_000_000_000_000 },
+  });
+  assert.equal(clamped.status, 200);
+  assert.equal(clamped.body.applied.coins, -1_000_000_000_000);
+  assert.equal(clamped.body.character.coins,
+    Math.max(0, before.body.coins + 321 - 1_000_000_000_000));
+  // Earlier in this suite a repeatable test code deliberately paid out two
+  // trillion coins, so drain two more bounded admin adjustments to reach the
+  // lower clamp.
+  await api(`/api/admin/characters/${characterId}/economy`, {
+    method: 'PATCH', body: { coins: -1_000_000_000_000 },
+  });
+  const zero = await api(`/api/admin/characters/${characterId}/economy`, {
+    method: 'PATCH', body: { coins: -1_000_000_000_000 },
+  });
+  assert.equal(zero.body.character.coins, 0);
+});
+
 // ---------------------------------------------------------------------------
 // Advertising: the role that lets a player upload one, and the advert the
 // superadmin puts in front of the site.
@@ -802,6 +909,15 @@ function webp(bytes = 64) {
   payload.writeUInt32LE(bytes - 8, 4);
   payload.write('WEBP', 8, 'ascii');
   payload.write('VP8 ', 12, 'ascii');
+  return payload;
+}
+
+/** A structurally identifiable MP4 payload, deliberately larger than 1 MiB. */
+function mp4(bytes = 2 * 1024 * 1024) {
+  const payload = Buffer.alloc(bytes);
+  payload.writeUInt32BE(24, 0);
+  payload.write('ftyp', 4, 'ascii');
+  payload.write('isom', 8, 'ascii');
   return payload;
 }
 
@@ -861,6 +977,47 @@ test('uploading an advert needs the advertiser role, and nothing more', async ()
   assert.equal(served.status, 200);
   assert.equal(served.headers.get('content-type'), 'image/webp');
 
+  // Video uploads bypass the ordinary 1 MiB JSON body reader and are streamed
+  // to disk. Replacing the image also sends the advert back to review.
+  const videoBytes = mp4();
+  const firstVideoChunk = await fetch(`${BASE}/api/ads/${created.body.id}/image`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'video/mp4', Cookie: session.cookie,
+      'Content-Range': `bytes 0-${1024 * 1024 - 1}/${videoBytes.length}`,
+    },
+    body: videoBytes.subarray(0, 1024 * 1024),
+  });
+  assert.equal(firstVideoChunk.status, 200);
+  const progress = await firstVideoChunk.json();
+  assert.equal(progress.complete, false);
+  assert.equal(progress.received, 1024 * 1024);
+
+  const video = await fetch(`${BASE}/api/ads/${created.body.id}/image`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'video/mp4', Cookie: session.cookie,
+      'Content-Range': `bytes ${1024 * 1024}-${videoBytes.length - 1}/${videoBytes.length}`,
+      'X-Upload-Id': progress.uploadId,
+    },
+    body: videoBytes.subarray(1024 * 1024),
+  });
+  const videoText = await video.text();
+  assert.equal(video.status, 200, videoText);
+  const uploadedVideo = JSON.parse(videoText);
+  assert.equal(uploadedVideo.kind, 'video');
+  assert.match(uploadedVideo.video, /^\/media\/ads\/[0-9a-f]{20}\.mp4$/);
+
+  const range = await fetch(`${BASE}${uploadedVideo.video}`, { headers: { Range: 'bytes=0-11' } });
+  assert.equal(range.status, 206);
+  assert.equal(range.headers.get('content-range'), `bytes 0-11/${2 * 1024 * 1024}`);
+  assert.equal((await range.arrayBuffer()).byteLength, 12);
+  const suffix = await fetch(`${BASE}${uploadedVideo.video}`, { headers: { Range: 'bytes=-16' } });
+  assert.equal(suffix.status, 206);
+  assert.equal(suffix.headers.get('content-range'),
+    `bytes ${2 * 1024 * 1024 - 16}-${2 * 1024 * 1024 - 1}/${2 * 1024 * 1024}`);
+  assert.equal((await suffix.arrayBuffer()).byteLength, 16);
+
   // The role grants nothing beyond advertising.
   const users = await api('/api/admin/users');
   assert.equal(users.status, 403, 'the advertiser role reached the user list');
@@ -879,7 +1036,24 @@ test('uploading an advert needs the advertiser role, and nothing more', async ()
   const publicAfter = await api('/api/ads');
   const shown = publicAfter.body.ads.find((ad) => ad.id === created.body.id);
   assert.ok(shown, 'an approved advert was not served');
-  assert.equal(shown.image, imageUrl);
+  assert.equal(shown.image, null);
+  assert.equal(shown.video, uploadedVideo.video);
+
+  // Media and target links are optional: plain text is a valid advert.
+  session.cookie = advertiserCookie;
+  const textOnly = await api('/api/ads', {
+    method: 'POST', body: { title: 'Nur eine Nachricht' },
+  });
+  assert.equal(textOnly.status, 200, JSON.stringify(textOnly.body));
+  session.cookie = rootCookie;
+  await api(`/api/admin/ads/${textOnly.body.id}`, {
+    method: 'POST', body: { status: 'approved', note: 'Text reicht' },
+  });
+  const publicText = await api('/api/ads');
+  const plain = publicText.body.ads.find((ad) => ad.id === textOnly.body.id);
+  assert.ok(plain);
+  assert.equal(plain.image, null);
+  assert.equal(plain.video, null);
 
   // The advertiser sees the figures the server counted, not an estimate.
   session.cookie = advertiserCookie;

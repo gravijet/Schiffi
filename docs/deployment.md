@@ -95,6 +95,15 @@ The environment file is the only place production secrets live. The
 repository's own `.env` is for development and is deliberately unreadable to
 the service account - the server logs that it skipped it and carries on.
 
+### Large advert uploads
+
+Advert images and videos may be up to 1 GiB. Files above 1.5 MiB are split by
+the browser into small requests, assembled on the server, validated from their
+actual bytes and only then published. This keeps every request below the
+production nginx `client_max_body_size 2m` ceiling and avoids a CDN
+single-request limit. Keep the nginx limit at 2 MiB or higher; raising it to
+1 GiB is neither required nor desirable.
+
 ## Deploying a change
 
 ```sh
@@ -114,7 +123,7 @@ npm run test:all                                  # SQLite, the default
 TEST_DATABASE_URL=postgres://…/schiffi_test npm run test:all   # PostgreSQL
 ```
 
-Both dialects run the same 77 server tests; 27 more run in a real browser. The PostgreSQL run needs a throwaway
+Both dialects run the same 81 server tests; 29 more run in a real browser. The PostgreSQL run needs a throwaway
 database: each suite drops and recreates its own schema inside it.
 
 ## DNS

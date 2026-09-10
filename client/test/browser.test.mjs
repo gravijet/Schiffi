@@ -33,6 +33,9 @@ process.env.SMTP_HOST = '';
 // superadmin, so the console can be driven for real rather than described.
 process.env.SUPERADMIN_EMAIL = 'browser@example.org';
 process.env.PASSWORD_VAULT_KEY = 'b'.repeat(64);
+// The real value would make the reward-ad test sit through a 15s countdown
+// for no reason: the countdown logic itself is exercised, only shortened.
+process.env.AD_REWARD_WATCH_SECONDS = '1';
 
 // Empty database, SQLite or PostgreSQL depending on TEST_DATABASE_URL.
 await useTestDatabase(TEST_DB);
@@ -87,6 +90,27 @@ test('the first visit is not stuck behind the boot screen', async () => {
     'the language picker is in the DOM but not visible');
   assert.equal(await page.locator('#boot').count(), 0,
     'the boot overlay is still covering the page');
+  assert.ok(!/(^|\n)null($|\n)/.test(await page.locator('.modal').innerText()),
+    'a conditional element was rendered as the literal text "null"');
+});
+
+test('guest play signs in with a generated nickname', async () => {
+  const context = await browser.newContext({ viewport: { width: 1100, height: 760 } });
+  const guest = await context.newPage();
+  try {
+    await guest.goto(base, { waitUntil: 'domcontentloaded' });
+    await guest.waitForSelector('.lang-grid', { timeout: 30_000 });
+    await guest.locator('.lang-btn', { hasText: 'Deutsch' }).first().click();
+    await guest.locator('.site-nav__link', { hasText: 'Spielen' }).first().click();
+    await guest.locator('button.guest-button').click();
+    await guest.waitForSelector('.site-account__name', { timeout: 20_000 });
+    const me = await guest.evaluate(() => fetch('/api/auth/me', { credentials: 'same-origin' }).then((r) => r.json()));
+    assert.equal(me.user.guest, true);
+    assert.equal(me.user.email, null);
+    assert.ok(me.user.username.length >= 3);
+  } finally {
+    await context.close();
+  }
 });
 
 test('choosing a language renders the site in that language', async () => {
@@ -154,6 +178,43 @@ test('nothing the site ships mentions the superadmin console', async () => {
   await attempt.close();
 });
 
+test('a touch visitor is told to prefer a PC, a mouse visitor is not', async () => {
+  const { devices } = await import('playwright');
+  const phone = await browser.newContext({ ...devices['Pixel 7'] });
+  const phonePage = await phone.newPage();
+  await phonePage.goto(base, { waitUntil: 'domcontentloaded' });
+  await phonePage.waitForSelector('.mobile-notice', { timeout: 20_000 });
+  assert.match(await phonePage.locator('.mobile-notice').innerText(), /PC/);
+
+  // A first-ever visit also carries the language dialog, on top of the
+  // notice - clear it the way a real visitor would before touching anything
+  // underneath it.
+  await phonePage.waitForSelector('.lang-grid', { timeout: 20_000 });
+  await phonePage.locator('.lang-btn').first().click();
+  await phonePage.waitForSelector('.modal-backdrop', { state: 'detached', timeout: 10_000 });
+
+  // Dismissing it is remembered for the tab's session, so a reload of the
+  // same tab does not nag again - sessionStorage is exactly that scope.
+  await phonePage.locator('.mobile-notice .icon-btn').click();
+  await phonePage.waitForSelector('.mobile-notice', { state: 'detached', timeout: 5_000 });
+  await phonePage.reload({ waitUntil: 'domcontentloaded' });
+  await phonePage.waitForTimeout(1000);
+  assert.equal(await phonePage.locator('.mobile-notice').count(), 0,
+    'dismissing the notice did not survive a reload of the same tab');
+  await phone.close();
+
+  // A new visit (a new session) is asked again, deliberately.
+  const secondVisit = await browser.newContext({ ...devices['Pixel 7'] });
+  const secondPage = await secondVisit.newPage();
+  await secondPage.goto(base, { waitUntil: 'domcontentloaded' });
+  await secondPage.waitForSelector('.mobile-notice', { timeout: 20_000 });
+  await secondVisit.close();
+
+  // A desktop visitor with a real pointer never sees it at all.
+  assert.equal(await page.locator('.mobile-notice').count(), 0,
+    'the mobile notice showed up for a mouse-and-keyboard visitor');
+});
+
 test('graphics quality is auto-detected from a real measurement', async () => {
   const detected = await page.evaluate(() =>
     JSON.parse(localStorage.getItem('schiffi.settings.v1')).autoDetected);
@@ -202,6 +263,15 @@ test('a new game starts and the map actually paints', async () => {
     return seen.size;
   });
   assert.ok(distinctColours > 3, `the canvas looks blank (${distinctColours} distinct colours)`);
+});
+
+test('clicking the map sets a sailing destination', async () => {
+  const box = await page.locator('#map-canvas').boundingBox();
+  assert.ok(box);
+  await page.mouse.click(box.x + box.width / 2 + 90, box.y + box.height / 2);
+  await page.waitForFunction(() => Boolean(window.__schiffi.renderer.destination), null, { timeout: 3000 });
+  const target = await page.evaluate(() => window.__schiffi.renderer.destination);
+  assert.ok(Number.isFinite(target.x) && Number.isFinite(target.y));
 });
 
 /**
@@ -408,6 +478,15 @@ test('the contract board shows what the port has really posted', async () => {
   ]);
   assert.ok(posted > 0, 'the port posted no contracts at all');
   assert.equal(shown, posted, `board shows ${shown} contracts, the port has ${posted}`);
+
+  // A delivery-type contract used to name only the destination port, leaving
+  // a captain no way to tell where that port actually is. It must now carry
+  // a heading and a distance, the way exploration and salvage contracts
+  // already did. Reward-sorted, so which slot holds a delivery varies - check
+  // the whole board rather than assuming a position.
+  const boardText = await page.locator('.modal__body').innerText();
+  assert.match(boardText, /km/, 'no contract on the board shows a distance to its destination');
+
   await page.locator('.modal__foot button').last().click();
 });
 
@@ -430,7 +509,8 @@ test('accepting a contract really moves it into the active list', async () => {
 });
 
 test('the exchange screen loads the world market from the server', async () => {
-  await page.locator('#act-exchange').click();
+  await page.locator('#act-more').click();
+  await page.locator('#more-exchange').click();
   await page.waitForSelector('.modal', { timeout: 10_000 });
   await page.waitForFunction(
     () => !document.querySelector('.modal__body')?.textContent.includes('…'),
@@ -496,14 +576,14 @@ test('every action-bar button opens a screen without an error', async () => {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(300);
 
-  for (const id of ['#act-missions', '#act-exchange']) {
+  for (const id of ['#act-missions']) {
     await page.locator(id).click();
     await page.waitForSelector('.modal', { timeout: 10_000 });
     await page.waitForTimeout(700);
     await page.keyboard.press('Escape');
     await page.waitForTimeout(200);
   }
-  for (const id of ['#more-guild', '#more-company', '#more-album']) {
+  for (const id of ['#more-exchange', '#more-guild', '#more-company', '#more-album']) {
     await page.locator('#act-more').click();
     await page.locator(id).click();
     await page.waitForSelector('.modal', { timeout: 10_000 });
@@ -511,6 +591,64 @@ test('every action-bar button opens a screen without an error', async () => {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(200);
   }
+});
+
+test('watching a reward advert pays coins once, then the cooldown holds', async () => {
+  // Seed an approved 'reward'-placement advert as the superadmin. The
+  // submission form itself is exactly the 'menu' flow already covered above
+  // with one extra field, so this goes straight through the API - what is
+  // actually new here is the payout.
+  const admin = await browser.newContext();
+  const adminPage = await admin.newPage();
+  await adminPage.goto(base, { waitUntil: 'domcontentloaded' });
+  const adId = await adminPage.evaluate(async () => {
+    const login = await fetch('/api/auth/login', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier: 'browser@example.org', password: 'Sturmvogel-Anker-99' }),
+    });
+    if (!login.ok) throw new Error(`login failed: ${login.status}`);
+    const created = await fetch('/api/ads', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Rum und Rabatt', body: 'Nur diese Woche.', placement: 'reward' }),
+    }).then((r) => r.json());
+    const reviewed = await fetch(`/api/admin/ads/${created.id}`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'approved', note: '' }),
+    });
+    if (!reviewed.ok) throw new Error(`approval failed: ${reviewed.status}`);
+    return created.id;
+  });
+  await admin.close();
+
+  const before = Number((await page.locator('#stat-coins').innerText()).replace(/\D/g, ''));
+
+  await page.locator('#act-more').click();
+  await page.locator('#more-adreward').click();
+  await page.waitForSelector('.modal', { timeout: 10_000 });
+  // The claim button is disabled until the (test-shortened) watch time is up.
+  await page.waitForSelector('.modal button.primary:not([disabled])', { timeout: 5_000 });
+  await page.locator('.modal button.primary').click();
+  await page.waitForFunction((prev) => {
+    const node = document.getElementById('stat-coins');
+    return node && Number(node.textContent.replace(/\D/g, '')) > prev;
+  }, before, { timeout: 10_000 });
+  await page.waitForSelector('.modal', { state: 'detached', timeout: 10_000 });
+
+  // The button being gone does not mean the rule is only in the button: a
+  // second claim inside the cooldown must be refused by the server itself.
+  const second = await page.evaluate(async (id) => {
+    const character = window.__schiffi.character;
+    const response = await fetch(`/api/ads/${id}/reward`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ characterId: character.id }),
+    });
+    return response.status;
+  }, adId);
+  assert.equal(second, 429, 'a second claim inside the cooldown was not refused');
 });
 
 test('the offline cache registers and keeps the terrain, never the API', async () => {
@@ -596,6 +734,12 @@ test('the superadmin console reads a password and puts an advert in front of the
   await cx.locator('input[placeholder="Überschrift"]').fill('Hafenfest im Nordmeer');
   await cx.locator('textarea').fill('Drei Tage lang zollfrei.');
   await cx.locator('input[type="number"]').fill('0');
+  await cx.locator('input[type="file"]').first().setInputFiles({
+    name: 'hafenfest.png', mimeType: 'image/png',
+    buffer: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64'),
+  });
   await cx.locator('button.primary', { hasText: 'Anlegen' }).click();
   await cx.waitForSelector('button:text-is("Anzeigen")', { timeout: 10_000 });
   await cx.locator('button', { hasText: 'Anzeigen' }).first().click();
@@ -607,6 +751,10 @@ test('the superadmin console reads a password and puts an advert in front of the
   await visitor.goto(base, { waitUntil: 'domcontentloaded' });
   await visitor.waitForSelector('.promo__headline', { timeout: 30_000 });
   assert.equal((await visitor.locator('.promo__headline').innerText()).trim(), 'Hafenfest im Nordmeer');
+  await visitor.waitForFunction(() => {
+    const image = document.querySelector('.promo__image');
+    return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0;
+  }, null, { timeout: 10_000 });
   // Occlusion, not display: the site is built underneath, and the advert has
   // to be the thing the visitor's pointer would actually hit.
   const onTop = await visitor.evaluate(() =>
@@ -634,7 +782,10 @@ test('the superadmin console reads a password and puts an advert in front of the
 });
 
 test('no uncaught errors were logged during the session', () => {
-  const ignorable = /favicon|ERR_INTERNET_DISCONNECTED|WebSocket is closed before/i;
+  // The 429 is the reward-cooldown test deliberately provoking a refusal -
+  // Chromium logs a rejected fetch to the console on its own, regardless of
+  // the response being exactly what that test expected.
+  const ignorable = /favicon|ERR_INTERNET_DISCONNECTED|WebSocket is closed before|429 \(Too Many Requests\)/i;
   const real = consoleErrors.filter((message) => !ignorable.test(message));
   assert.deepEqual(real, [], `browser reported errors:\n${real.join('\n')}`);
 });

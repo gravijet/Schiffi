@@ -7,30 +7,28 @@
  * screen is a document, and it is laid out like one: a sticky header, a
  * single readable column, generous space, soft cards.
  *
- * Colours come from the sea: near-black navy ground, weathered brass for
- * accents, parchment for text. Nothing here is borrowed from another site -
- * the shapes are rounded rectangles with a hairline border and one accent
- * gradient, which also happens to be among the cheapest things a browser can
- * paint.
+ * Colours come from a modern hosting dashboard: near-black navy surfaces,
+ * crisp teal accents and high-contrast neutral text. The in-game pixel map
+ * keeps its own established palette in the renderer.
  */
 
 :root {
   color-scheme: dark;
 
-  --sea-900: #060f16;
-  --sea-800: #0d1b26;
-  --sea-700: #142735;
-  --sea-600: #1c3546;
-  --sea-500: #27485c;
-  --sea-400: #3a637b;
+  --sea-900: #061019;
+  --sea-800: #0a1823;
+  --sea-700: #102431;
+  --sea-600: #173544;
+  --sea-500: #225065;
+  --sea-400: #337087;
 
-  --brass-500: #c9a227;
-  --brass-400: #e0bb45;
-  --brass-300: #f0d478;
+  --brass-500: #16c79a;
+  --brass-400: #35d6b4;
+  --brass-300: #80ead2;
 
-  --parchment: #ece3d2;
-  --parchment-dim: #b9b3a5;
-  --ink: #0a1219;
+  --parchment: #f4f8fb;
+  --parchment-dim: #9eafba;
+  --ink: #04110e;
 
   --good: #57b877;
   --warn: #d99a2b;
@@ -38,7 +36,7 @@
   --info: #4f9dd1;
 
   --panel-bg: rgba(13, 27, 38, 0.92);
-  --panel-border: rgba(201, 162, 39, 0.35);
+  --panel-border: rgba(53, 214, 180, 0.32);
   --panel-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
 
   /* Semantic surfaces. Every chrome element uses these rather than a literal
@@ -50,7 +48,7 @@
   --menu-bg: rgba(6, 15, 22, 0.55);
   --card-bg: rgba(13, 27, 38, 0.6);
   --input-bg: var(--sea-900);
-  --row-hover: rgba(201, 162, 39, 0.08);
+  --row-hover: rgba(22, 199, 154, 0.08);
 
   /* Two radii: the game's chrome stays tight, the site is softer. */
   --radius: 6px;
@@ -62,13 +60,13 @@
   /* One accent gradient, used for the wordmark, primary buttons and the
      active nav underline, so the whole site is tied together by a single
      recognisable thing rather than a dozen unrelated highlights. */
-  --accent: linear-gradient(135deg, #f0d478 0%, #c9a227 55%, #a8791b 100%);
-  --accent-soft: linear-gradient(135deg, rgba(240, 212, 120, 0.16), rgba(201, 162, 39, 0.06));
-  --site-bg: #050c12;
-  --site-header-bg: rgba(6, 15, 22, 0.82);
-  --site-card-bg: rgba(16, 32, 44, 0.72);
+  --accent: linear-gradient(135deg, #56e6c5 0%, #16c79a 55%, #0b9f7c 100%);
+  --accent-soft: linear-gradient(135deg, rgba(53, 214, 180, 0.18), rgba(22, 199, 154, 0.06));
+  --site-bg: #050c13;
+  --site-header-bg: rgba(5, 14, 22, 0.9);
+  --site-card-bg: rgba(12, 29, 40, 0.84);
   --site-card-border: rgba(255, 255, 255, 0.08);
-  --site-card-hover: rgba(240, 212, 120, 0.4);
+  --site-card-hover: rgba(53, 214, 180, 0.55);
 
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -90,9 +88,9 @@
   --sea-500: #b3aa95;
   --sea-400: #948b76;
 
-  --brass-500: #8a6d12;
-  --brass-400: #7a5f0d;
-  --brass-300: #5f4a08;
+  --brass-500: #087f66;
+  --brass-400: #08735e;
+  --brass-300: #075c4d;
 
   --panel-bg: rgba(246, 243, 235, 0.94);
   --panel-border: rgba(20, 39, 53, 0.26);
@@ -112,13 +110,13 @@
   --bad: #a63a24;
   --info: #245e86;
 
-  --accent: linear-gradient(135deg, #b8912a 0%, #8a6d12 60%, #6b520a 100%);
-  --accent-soft: linear-gradient(135deg, rgba(138, 109, 18, 0.14), rgba(138, 109, 18, 0.04));
-  --site-bg: #f4f1e8;
-  --site-header-bg: rgba(246, 243, 235, 0.9);
-  --site-card-bg: rgba(255, 253, 248, 0.86);
+  --accent: linear-gradient(135deg, #22b890 0%, #087f66 60%, #056653 100%);
+  --accent-soft: linear-gradient(135deg, rgba(8, 127, 102, 0.14), rgba(8, 127, 102, 0.04));
+  --site-bg: #f2f7f7;
+  --site-header-bg: rgba(248, 252, 252, 0.92);
+  --site-card-bg: rgba(255, 255, 255, 0.9);
   --site-card-border: rgba(20, 39, 53, 0.12);
-  --site-card-hover: rgba(138, 109, 18, 0.45);
+  --site-card-hover: rgba(8, 127, 102, 0.5);
 }
 
 * { box-sizing: border-box; }
@@ -225,6 +223,7 @@ button, .btn {
   padding: 7px 14px;
   cursor: pointer;
   min-height: 34px;
+  touch-action: manipulation;
   transition: background 0.12s ease, border-color 0.12s ease, transform 0.08s ease;
 }
 button:hover:not(:disabled), .btn:hover { background: var(--sea-500); border-color: var(--brass-500); }
@@ -234,6 +233,14 @@ button:focus-visible, .btn:focus-visible, a:focus-visible {
   outline: 2px solid var(--brass-400); outline-offset: 2px;
 }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.is-busy { position: relative; color: transparent !important; }
+button.is-busy::after {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  width: 13px; height: 13px; margin: -7px 0 0 -7px;
+  border: 2px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; color: var(--parchment); animation: busy-spin .55s linear infinite;
+}
+@keyframes busy-spin { to { transform: rotate(360deg); } }
 button.primary {
   background: var(--accent); color: var(--ink);
   border-color: transparent; font-weight: 650;
@@ -278,7 +285,7 @@ th {
 }
 td { padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,0.05); }
 tbody tr:hover { background: var(--row-hover); }
-tr.is-selected { background: rgba(201, 162, 39, 0.16); }
+tr.is-selected { background: rgba(22, 199, 154, 0.16); }
 
 /* --- toasts -------------------------------------------------------------- */
 #toasts {
@@ -297,6 +304,16 @@ tr.is-selected { background: rgba(201, 162, 39, 0.16); }
 .toast--bad { border-left-color: var(--bad); }
 .toast--warn { border-left-color: var(--warn); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-6px); } }
+
+/* --- mobile notice --------------------------------------------------------- */
+.mobile-notice {
+  position: fixed; left: 0; right: 0; top: 0; z-index: 110;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 8px 40px 8px 14px; text-align: center;
+  background: var(--panel-bg); border-bottom: 1px solid var(--panel-border);
+  box-shadow: var(--panel-shadow); font-size: 13px;
+}
+.mobile-notice .icon-btn { position: absolute; right: 8px; top: 4px; }
 
 /* --- modal --------------------------------------------------------------- */
 .modal-backdrop {

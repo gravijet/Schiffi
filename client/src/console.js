@@ -20,6 +20,7 @@ import { h, add, clear, toast, confirmDialog } from './ui/dom.js';
 const $ = (path, options = {}) => request(path, options);
 
 async function request(path, { method = 'GET', body, file } = {}) {
+  if (file && file.size > 1536 * 1024) return uploadChunks(path, file);
   const init = { method, credentials: 'same-origin' };
   if (file) {
     init.headers = { 'Content-Type': file.type || 'application/octet-stream' };
@@ -37,6 +38,43 @@ async function request(path, { method = 'GET', body, file } = {}) {
     throw error;
   }
   return payload;
+}
+
+async function uploadChunks(path, file) {
+  const chunkBytes = 1536 * 1024;
+  const send = async (offset, uploadId = null) => {
+    const end = Math.min(file.size, offset + chunkBytes);
+    const headers = {
+      'Content-Type': file.type || 'application/octet-stream',
+      'Content-Range': `bytes ${offset}-${end - 1}/${file.size}`,
+    };
+    if (uploadId) headers['X-Upload-Id'] = uploadId;
+    const response = await fetch(path, {
+      method: 'POST', credentials: 'same-origin', headers,
+      body: file.slice(offset, end, file.type),
+    });
+    const text = await response.text();
+    let payload;
+    try { payload = text ? JSON.parse(text) : null; } catch { payload = { message: text }; }
+    if (!response.ok) {
+      const error = new Error(payload?.message || `HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
+    return payload;
+  };
+
+  const first = await send(0);
+  const offsets = [];
+  for (let offset = chunkBytes; offset < file.size; offset += chunkBytes) offsets.push(offset);
+  let completed = null;
+  for (let index = 0; index < offsets.length; index += 4) {
+    const results = await Promise.all(offsets.slice(index, index + 4)
+      .map((offset) => send(offset, first.uploadId)));
+    completed = results.find((result) => result?.complete) ?? completed;
+  }
+  if (!completed) throw new Error('Upload konnte nicht abgeschlossen werden.');
+  return completed;
 }
 
 const root = document.getElementById('console');
@@ -79,12 +117,14 @@ function render() {
         h('a.btn', { href: '/' }, 'Zur Seite'))),
     h('nav.cx-tabs', null,
       tab('lage', 'Lage'),
+      tab('konfiguration', 'Konfiguration'),
       tab('kennwoerter', 'Kennwörter'),
       tab('werbung', 'Werbung vor der Seite')),
     h('main.cx-main', null,
       screen === 'lage' ? lageView()
-        : screen === 'kennwoerter' ? kennwortView()
-          : werbungView()));
+        : screen === 'konfiguration' ? konfigurationView()
+          : screen === 'kennwoerter' ? kennwortView()
+            : werbungView()));
 }
 
 // --- overview ---------------------------------------------------------------
@@ -125,6 +165,105 @@ function stat(label, value) {
   return h('div.cx-stat', null,
     h('div.cx-stat__value', null, value),
     h('div.cx-stat__label', null, label));
+}
+
+// --- runtime configuration -------------------------------------------------
+
+function konfigurationView() {
+  const root = h('div.stack', null, h('p.muted', null, 'Konfiguration wird geladen …'));
+
+  $('/api/superadmin/settings').then(({ settings }) => {
+    clear(root);
+    const publicUrl = h('input', { value: settings.publicUrl });
+    const smtpHost = h('input', { value: settings.mail.host, placeholder: 'smtp.example.org' });
+    const smtpPort = h('input', { type: 'number', min: 1, max: 65535, value: settings.mail.port });
+    const smtpSecure = h('input', { type: 'checkbox', checked: settings.mail.secure });
+    const smtpUser = h('input', { value: settings.mail.user, autocomplete: 'off' });
+    const smtpPass = h('input', {
+      type: 'password', autocomplete: 'new-password',
+      placeholder: settings.mail.passwordConfigured ? 'Gespeichertes Passwort beibehalten' : 'SMTP-Passwort',
+    });
+    const mailFrom = h('input', { value: settings.mail.from });
+    const startingCoins = h('input', { type: 'number', min: 0, value: settings.game.startingCoins });
+    const maxPlayers = h('input', { type: 'number', min: 2, max: 5000, value: settings.game.maxPlayersPerWorld });
+    const protection = h('input', { type: 'number', min: 0, max: 10080, value: settings.game.newbieProtectionMinutes });
+    const adCoins = h('input', { type: 'number', min: 0, value: settings.game.adRewardCoins });
+    const adCooldown = h('input', { type: 'number', min: 0, max: 86400, value: settings.game.adRewardCooldownSeconds });
+    const mediaLimit = h('input', { type: 'number', min: 1, max: 1024, value: settings.uploads.maxMediaMiB });
+    const testAddress = h('input', { type: 'email', value: overview.superadminEmail });
+
+    const save = async () => {
+      try {
+        const { settings: saved } = await $('/api/superadmin/settings', {
+          method: 'PATCH',
+          body: {
+            publicUrl: publicUrl.value.trim(),
+            mail: {
+              host: smtpHost.value.trim(), port: Number(smtpPort.value), secure: smtpSecure.checked,
+              user: smtpUser.value.trim(), pass: smtpPass.value, from: mailFrom.value.trim(),
+            },
+            game: {
+              startingCoins: Number(startingCoins.value), maxPlayersPerWorld: Number(maxPlayers.value),
+              newbieProtectionMinutes: Number(protection.value),
+              adRewardCoins: Number(adCoins.value), adRewardCooldownSeconds: Number(adCooldown.value),
+            },
+            uploads: { maxMediaMiB: Number(mediaLimit.value) },
+          },
+        });
+        smtpPass.value = '';
+        smtpPass.placeholder = saved.mail.passwordConfigured
+          ? 'Gespeichertes Passwort beibehalten' : 'SMTP-Passwort';
+        overview.mailConfigured = Boolean(saved.mail.host);
+        toast('Konfiguration gespeichert und sofort übernommen.', 'good');
+      } catch (error) { toast(error.message, 'bad'); }
+    };
+
+    add(root,
+      h('p.lede', null,
+        'Diese Werte werden dauerhaft gespeichert und ohne Neustart übernommen. Zugangsdaten '
+        + 'werden mit dem Sitzungsschlüssel verschlüsselt in der Datenbank abgelegt.'),
+      h('div.cx-card', null,
+        h('h2', null, 'Seite'),
+        field('Öffentliche Basis-URL', publicUrl)),
+      h('div.cx-card', null,
+        h('h2', null, 'E-Mail / SMTP'),
+        h('div.cx-form-grid', null,
+          field('SMTP-Host', smtpHost), field('Port', smtpPort),
+          field('Benutzer', smtpUser), field('Passwort', smtpPass),
+          field('Absender', mailFrom),
+          h('label.row', null, smtpSecure, h('span', null, 'Direktes TLS (typisch Port 465)'))),
+        h('div.row', null,
+          testAddress,
+          h('button', {
+            onClick: async () => {
+              try {
+                const result = await $('/api/superadmin/settings/test-mail', {
+                  method: 'POST', body: { to: testAddress.value.trim() },
+                });
+                toast(`Testnachricht: ${result.delivered}`, 'good');
+              } catch (error) { toast(error.message, 'bad'); }
+            },
+          }, 'Testmail senden'))),
+      h('div.cx-card', null,
+        h('h2', null, 'Spiel und Uploads'),
+        h('div.cx-form-grid', null,
+          field('Startmünzen für neue Kapitäne', startingCoins),
+          field('Standard-Spielerlimit pro Welt', maxPlayers),
+          field('Anfängerschutz (Minuten)', protection),
+          field('Münzen für eine angesehene Werbung', adCoins),
+          field('Sperrfrist zwischen zwei Werbe-Münzen (Sekunden)', adCooldown),
+          field('Werbe-Uploadlimit (MiB, max. 1024)', mediaLimit))),
+      h('button.primary', { onClick: save }, 'Alles speichern'));
+  }).catch((error) => {
+    clear(root);
+    root.append(h('p.bad', null, error.message));
+  });
+
+  return root;
+}
+
+function field(label, control) {
+  return h('div.field', null, h('label', null, label), control);
 }
 
 // --- passwords --------------------------------------------------------------
@@ -220,7 +359,7 @@ function werbungView() {
   const body = h('textarea', { rows: 3, maxLength: 600, placeholder: 'Text (optional)' });
   const target = h('input', { maxLength: 500, placeholder: 'https://… (optional)' });
   const seconds = h('input', { type: 'number', min: '0', max: '30', value: '5' });
-  const file = h('input', { type: 'file', accept: 'image/webp,image/png,image/jpeg' });
+  const file = h('input', { type: 'file', accept: 'image/webp,image/png,image/jpeg,video/mp4,video/webm,video/quicktime' });
 
   const refresh = async () => {
     clear(list);
@@ -235,7 +374,8 @@ function werbungView() {
 
   const row = (item) => h(`div.cx-card${item.active ? '.is-active' : ''}`, null,
     h('div.row', { style: { gap: '14px', alignItems: 'flex-start' } },
-      item.image ? h('img.cx-thumb', { src: item.image, alt: '' }) : null,
+      item.video ? h('video.cx-thumb', { src: item.video, controls: true, preload: 'metadata' })
+        : item.image ? h('img.cx-thumb', { src: item.image, alt: '' }) : null,
       h('div.grow', null,
         h('div.row.row--between', null,
           h('strong', null, item.headline),
@@ -253,15 +393,15 @@ function werbungView() {
               refresh();
             },
           }, item.active ? 'Ausschalten' : 'Anzeigen'),
-          h('label.btn.small', null, 'Bild ersetzen',
+          h('label.btn.small', null, 'Medium ersetzen',
             h('input', {
-              type: 'file', accept: 'image/webp,image/png,image/jpeg', style: { display: 'none' },
+              type: 'file', accept: 'image/webp,image/png,image/jpeg,video/mp4,video/webm,video/quicktime', style: { display: 'none' },
               onChange: async (event) => {
                 const picked = event.target.files?.[0];
                 if (!picked) return;
                 try {
                   await $(`/api/superadmin/interstitials/${item.id}/image`, { method: 'POST', file: picked });
-                  toast('Bild ersetzt', 'good');
+                  toast('Medium ersetzt', 'good');
                   refresh();
                 } catch (error) { toast(error.message, 'bad'); }
               },
@@ -289,7 +429,7 @@ function werbungView() {
           seconds: Number(seconds.value) || 0,
         },
       });
-      // The picture is uploaded after the row exists, so a rejected image
+      // Optional media is uploaded after the row exists, so rejected bytes
       // never throws away the text that was just typed.
       if (file.files?.[0]) {
         await $(`/api/superadmin/interstitials/${created.id}/image`, { method: 'POST', file: file.files[0] });
@@ -315,7 +455,7 @@ function werbungView() {
       h('div.field', null, h('label', null, 'Text'), body),
       h('div.field', null, h('label', null, 'Ziel-Link'), target),
       h('div.field', null, h('label', null, 'Wartezeit in Sekunden'), seconds),
-      h('div.field', null, h('label', null, 'Bild (WebP, PNG oder JPEG, max. 1 MB)'), file),
+      h('div.field', null, h('label', null, 'Bild oder Video (WebP, PNG, JPEG, MP4, WebM, MOV; max. 1 GB; optional)'), file),
       h('button.primary', { onClick: create }, 'Anlegen')),
     h('h2', null, 'Angelegte Werbung'),
     list);

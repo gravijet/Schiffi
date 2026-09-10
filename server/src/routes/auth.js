@@ -51,6 +51,17 @@ export function registerAuthRoutes(router) {
     return result;
   }, { auth: false });
 
+  router.post('/api/auth/guest', async (ctx) => {
+    const body = await ctx.body();
+    const result = await auth.registerGuest({
+      locale: body.locale || negotiateLocale(ctx.locale),
+      ip: ctx.ip,
+    });
+    const session = await auth.createSession(result.userId, ctx.ip, ctx.req.headers['user-agent']);
+    setSessionCookie(ctx, session.token);
+    return { userId: result.userId, username: result.username, token: session.token };
+  }, { auth: false });
+
   router.post('/api/auth/logout', async (ctx) => {
     if (ctx.token) await auth.logout(ctx.token);
     ctx.setCookie(SESSION_COOKIE, '', { maxAge: 0 });

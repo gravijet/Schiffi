@@ -62,10 +62,12 @@ export class MainMenu {
       h('span.site-brand__mark', { 'aria-hidden': 'true' }),
       h('span.site-brand__name', null, 'Schiffi'));
     this.account = h('div.site-account');
+    this.adRail = h('aside.site-ad-rail');
     this.footer = h('footer.site-footer');
     this.root.append(
       h('header.site-header', null,
         h('div.site-header__inner', null, this.brand, this.nav, this.account)),
+      this.adRail,
       this.main,
       this.footer);
   }
@@ -167,16 +169,48 @@ export class MainMenu {
   render() {
     this.renderNav();
     this.renderMain();
+    this.renderAdRail();
     this.renderFooter();
   }
 
+  /** Approved normal adverts are visible below the navigation on every site page. */
+  renderAdRail() {
+    clear(this.adRail);
+    const paint = (items) => {
+      clear(this.adRail);
+      if (!items?.length) return;
+      const ads = h('div.site-ads');
+      for (const ad of items) {
+        const linked = Boolean(ad.targetUrl);
+        const card = h(linked ? 'a.site-ad' : 'div.site-ad', linked ? {
+          href: ad.targetUrl, target: '_blank', rel: 'noopener noreferrer sponsored',
+          onClick: () => { api.adClick(ad.id).catch(() => {}); },
+        } : null,
+        !settings.get('dataSaver') && ad.video
+          ? h('video.site-ad__image', { src: ad.video, muted: true, loop: true, autoplay: true, playsInline: true })
+          : !settings.get('dataSaver') && ad.image
+            ? h('img.site-ad__image', { src: ad.image, alt: '', loading: 'eager' }) : null,
+        h('div', null,
+          h('strong', null, ad.title),
+          ad.body ? h('div.small.muted', null, ad.body) : null));
+        ads.append(card);
+      }
+      add(this.adRail,
+        h('div.small.muted.site-ads__label', null, t('promo.note')),
+        ads);
+    };
+
+    if (this.normalAds) { paint(this.normalAds); return; }
+    api.ads().then(({ ads }) => {
+      this.normalAds = ads;
+      paint(ads);
+    }).catch(() => {});
+  }
+
   /**
-   * Footer: the pages that do not earn a place in the header, and the adverts.
-   *
-   * The adverts are real ones - approved by a reviewer, counted by the server
-   * when they are handed out, and counted again when they are clicked. Data
-   * saver skips the request entirely, because somebody who asked for less
-   * traffic should not be spending it on advertising.
+   * Footer: pages that do not earn a place in the header. Normal adverts live
+   * in the clearly labelled rail above the page content, where they are not
+   * hidden below a long screen.
    */
   renderFooter() {
     clear(this.footer);
@@ -184,9 +218,7 @@ export class MainMenu {
       onClick: () => this.go(screen),
     }, label);
 
-    const ads = h('div.site-ads');
     add(this.footer,
-      ads,
       h('div.site-footer__links', null,
         link('status', t('menu.serverStatus')),
         link('ads', t('ads.mine')),
@@ -195,21 +227,6 @@ export class MainMenu {
         h('span.grow'),
         h('span.small.muted', null, `Schiffi · ${new Date().getFullYear()}`)));
 
-    if (settings.get('dataSaver')) return;
-    api.ads().then(({ ads: items }) => {
-      if (!items.length) return;
-      for (const ad of items) {
-        add(ads, h('a.site-ad', {
-          href: ad.targetUrl, target: '_blank', rel: 'noopener noreferrer sponsored',
-          onClick: () => { api.adClick(ad.id).catch(() => {}); },
-        },
-        ad.image ? h('img.site-ad__image', { src: ad.image, alt: '', loading: 'lazy' }) : null,
-        h('div', null,
-          h('strong', null, ad.title),
-          h('div.small.muted', null, ad.body))));
-      }
-      ads.append(h('div.small.muted.site-ads__label', null, t('promo.note')));
-    }).catch(() => { /* no adverts: the footer stands without them */ });
   }
 
   renderNav() {
@@ -392,7 +409,7 @@ export class MainMenu {
     }
   }
 
-    async newGameDialog() {
+  async newGameDialog(preferredWorldId = null) {
     const { worlds } = await api.worlds();
     const open = worlds.filter((w) => w.status === 'open');
     if (open.length === 0) {
@@ -400,7 +417,8 @@ export class MainMenu {
       return;
     }
 
-    let selectedWorld = open[0].id;
+    let selectedWorld = open.some((world) => String(world.id) === String(preferredWorldId))
+      ? preferredWorldId : open[0].id;
     let selectedMode = 'trader';
     // Pre-filled from the account name: a blank required field is the most
     // common reason a player bounces off a character creation screen.
@@ -496,6 +514,16 @@ export class MainMenu {
         }
       };
 
+      const guest = async () => {
+        try {
+          await api.guest(currentLocale());
+          await this.refreshSession();
+          this.render();
+        } catch (error) {
+          toast(t(error.code ?? 'error.generic'), 'bad');
+        }
+      };
+
       add(root,
         h('div.card__title', null, mode === 'login' ? t('auth.login') : t('auth.register')),
         mode === 'login'
@@ -506,6 +534,7 @@ export class MainMenu {
         h('div.field', null, h('label', null, t('auth.password')), password),
         h('div.row', null,
           h('button.primary', { onClick: submit }, mode === 'login' ? t('auth.login') : t('auth.register')),
+          mode === 'login' ? h('button.guest-button', { onClick: guest }, t('auth.guest')) : null,
           h('button.ghost', {
             onClick: () => { mode = mode === 'login' ? 'register' : 'login'; render(); },
           }, mode === 'login' ? t('auth.noAccount') : t('auth.hasAccount')),
@@ -549,31 +578,89 @@ export class MainMenu {
   multiplayerScreen() {
     const root = h('div', null, h('h2', null, t('menu.multiplayer')), h('p.lede', null, t('server.worlds')));
     const list = h('div.stack');
-    root.append(list);
 
-    api.worlds().then(async ({ worlds }) => {
+    if (!this.session) {
+      root.append(this.authCard());
+      return root;
+    }
+
+    const name = h('input', { maxLength: 60, placeholder: t('common.name') });
+    const maxPlayers = h('input', { type: 'number', min: 2, max: 100, value: 20 });
+    const visibility = h('select', null,
+      h('option', { value: 'public' }, t('server.publicWorld')),
+      h('option', { value: 'private' }, t('server.privateWorld')));
+    const code = h('input', { maxLength: 12, placeholder: t('server.shareCode') });
+
+    const load = () => api.worlds().then(async ({ worlds }) => {
       clear(list);
+      if (!worlds.length) list.append(h('p.muted', null, t('common.empty')));
       for (const world of worlds) {
-        const card = h('div.card', null,
+        const card = h('div.card.world-card', null,
           h('div.row.row--between', null,
             h('div', null,
               h('strong', null, world.name),
               h('div.small.muted.mono', null, `${t('server.seed')} ${world.seed}`)),
             h('div.right', null,
               h('div', null, t('server.players', { count: world.online })),
-              h('div.small.muted', null, world.status === 'open' ? t('server.online') : t('server.maintenance')))));
+              h('div.small.muted', null, world.visibility === 'private'
+                ? t('server.privateWorld') : t('server.publicWorld')))),
+          world.inviteCode ? h('div.invite-code', null,
+            h('span.small.muted', null, t('server.shareCode')),
+            h('code', null, world.inviteCode),
+            h('button.ghost.small', {
+              onClick: () => navigator.clipboard?.writeText(world.inviteCode)
+                .then(() => toast(t('common.copied'), 'good')),
+            }, t('common.copy'))) : null,
+          h('button.primary.small', { onClick: () => this.newGameDialog(world.id) }, t('server.join')));
         list.append(card);
 
         api.worldStatus(world.id).then((status) => {
           if (!status.loaded) return;
-          card.append(h('dl.kv', { style: { marginTop: '8px' } },
-            h('dt', null, t('server.tick')), h('dd', null, `${status.tps.toFixed(1)} /s`),
-            h('dt', null, 'NPC'), h('dd', null, String(status.npcs)),
-            h('dt', null, t('weather.storm')), h('dd', null, String(status.storms)),
-            h('dt', null, t('hud.season')), h('dd', null, t(seasonKey(status.season)))));
+          card.append(h('div.small.muted.world-live', null,
+            `${status.tps.toFixed(1)} TPS · ${status.npcs} NPC · ${status.storms} ${t('weather.storm')}`));
         }).catch(() => {});
       }
     }).catch(() => list.append(h('p.bad', null, t('error.network'))));
+
+    const create = async () => {
+      try {
+        const result = await api.createWorld({
+          name: name.value.trim(), maxPlayers: Number(maxPlayers.value), visibility: visibility.value,
+        });
+        name.value = '';
+        toast(result.inviteCode
+          ? `${t('server.created')}: ${result.inviteCode}`
+          : t('server.created'), 'good', 7000);
+        await load();
+      } catch (error) { toast(t(error.code ?? 'error.generic'), 'bad'); }
+    };
+
+    const join = async () => {
+      try {
+        await api.joinWorld(code.value);
+        code.value = '';
+        toast(t('server.join'), 'good');
+        await load();
+      } catch (error) { toast(t(error.code ?? 'error.generic'), 'bad'); }
+    };
+
+    add(root,
+      h('div.grid-2.world-tools', null,
+        h('div.card', null,
+          h('div.card__title', null, t('server.createWorld')),
+          h('div.field', null, h('label', null, t('common.name')), name),
+          h('div.row', null,
+            h('div.field.grow', null, h('label', null, t('server.players', { count: '' })), maxPlayers),
+            h('div.field.grow', null, h('label', null, t('server.world')), visibility)),
+          h('button.primary', { onClick: create }, t('server.createWorld'))),
+        h('div.card', null,
+          h('div.card__title', null, t('server.joinCode')),
+          h('div.field', null, h('label', null, t('server.shareCode')), code),
+          h('button', { onClick: join }, t('server.joinCode')))),
+      h('h3', null, t('server.worlds')),
+      list);
+
+    load();
 
     return root;
   }
@@ -588,20 +675,20 @@ export class MainMenu {
       h('div.card', null,
         h('div.card__title', null, user.username),
         h('dl.kv', null,
-          h('dt', null, t('auth.email')), h('dd', null, user.email),
+          h('dt', null, t('auth.email')), h('dd', null, user.email ?? t('auth.guest')),
           h('dt', null, t('profile.joined')), h('dd', null, td(user.createdAt)),
           h('dt', null, t('auth.verifyEmail')), h('dd', null, user.emailVerified ? '✓' : '✗'),
           h('dt', null, t('menu.language')), h('dd', null, currentLocale()),
           h('dt', null, 'Roles'), h('dd', null, (this.session.roles ?? []).join(', ') || '—'))),
-      !user.emailVerified
+      !user.guest && !user.emailVerified
         ? h('div.card', null,
           h('p', null, t('auth.verifySent')),
           h('button', { onClick: async () => { await api.resendVerification(); toast(t('auth.verifySent'), 'info'); } },
             t('auth.verifyEmail')))
         : null,
-      h('div.card', null,
+      !user.guest ? h('div.card', null,
         h('div.card__title', null, t('auth.changePassword')),
-        this.passwordForm()),
+        this.passwordForm()) : null,
       h('div.card', null,
         h('div.card__title', null, t('auth.sessions')),
         this.sessionsList()),
@@ -609,7 +696,9 @@ export class MainMenu {
         h('div.card__title', null, t('common.actions')),
         h('div.row', null,
           h('button', { onClick: () => this.exportData() }, t('auth.exportData')),
-          h('button.danger', { onClick: () => this.deleteAccountDialog() }, t('auth.deleteAccount')))),
+          !user.guest
+            ? h('button.danger', { onClick: () => this.deleteAccountDialog() }, t('auth.deleteAccount'))
+            : null)),
     );
     return root;
   }
@@ -962,7 +1051,11 @@ export class MainMenu {
     const title = h('input', { placeholder: t('ads.adTitle'), maxLength: 90 });
     const body = h('textarea', { rows: 3, placeholder: t('ads.adBody'), maxLength: 400 });
     const target = h('input', { placeholder: 'https://…', maxLength: 300 });
-    const file = h('input', { type: 'file', accept: 'image/webp,image/png,image/jpeg' });
+    const placement = h('select', null,
+      h('option', { value: 'menu' }, t('ads.placement.menu')),
+      h('option', { value: 'sidebar' }, t('ads.placement.sidebar')),
+      h('option', { value: 'reward' }, t('ads.placement.reward')));
+    const file = h('input', { type: 'file', accept: 'image/webp,image/png,image/jpeg,video/mp4,video/webm,video/quicktime' });
 
     const refresh = async () => {
       clear(list);
@@ -984,11 +1077,12 @@ export class MainMenu {
           title: title.value.trim(),
           body: body.value.trim(),
           targetUrl: target.value.trim(),
+          placement: placement.value,
         });
         // The picture is optional, and it is uploaded after the advert exists
         // so a failed image never loses the text the advertiser just typed.
         if (file.files?.[0]) await api.uploadAdImage(created.id, file.files[0]);
-        title.value = ''; body.value = ''; target.value = ''; file.value = '';
+        title.value = ''; body.value = ''; target.value = ''; file.value = ''; placement.value = 'menu';
         toast(t('ads.submitted'), 'good');
         refresh();
       } catch (error) {
@@ -1002,6 +1096,8 @@ export class MainMenu {
         h('div.field', null, h('label', null, t('ads.adTitle')), title),
         h('div.field', null, h('label', null, t('ads.adBody')), body),
         h('div.field', null, h('label', null, t('ads.targetUrl')), target),
+        h('div.field', null, h('label', null, t('ads.placement.label')), placement,
+          h('p.small.muted', null, t('ads.placement.hint'))),
         h('div.field', null, h('label', null, t('ads.image')), file,
           h('p.small.muted', null, t('ads.imageHint'))),
         h('button.primary', { onClick: submit }, t('ads.submit'))),
@@ -1054,17 +1150,20 @@ export class MainMenu {
  */
 function adCard(ad, onChange) {
   return h('div.card.ad-card', null,
-    ad.image ? h('img.ad-card__image', { src: ad.image, alt: '', loading: 'lazy' }) : null,
+    ad.video ? h('video.ad-card__image', { src: ad.video, controls: true, preload: 'metadata' })
+      : ad.image ? h('img.ad-card__image', { src: ad.image, alt: '', loading: 'lazy' }) : null,
     h('div.grow', null,
       h('div.row.row--between', null,
         h('strong', null, ad.title),
         h(`span.small.badge.badge--${ad.status}`, null, t(`ads.${ad.status}`))),
       h('p.small.muted', { style: { margin: '4px 0' } }, ad.body),
       h('div.small.mono.muted', null, ad.targetUrl),
+      h('div.small.muted', null, t(`ads.placement.${ad.placement}`)),
       ad.reviewNote ? h('p.small.warn', null, ad.reviewNote) : null,
       h('div.row', { style: { marginTop: '6px' } },
-        h('span.small.muted', null,
-          t('ads.stats', { impressions: ad.impressions, clicks: ad.clicks })),
+        h('span.small.muted', null, ad.placement === 'reward'
+          ? t('ads.statsReward', { impressions: ad.impressions, completions: ad.completions ?? 0 })
+          : t('ads.stats', { impressions: ad.impressions, clicks: ad.clicks })),
         h('span.grow'),
         h('button.ghost.small.danger', {
           onClick: async () => {

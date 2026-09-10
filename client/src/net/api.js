@@ -52,14 +52,64 @@ async function request(path, { method = 'GET', body, signal, raw = false } = {})
  * intermediaries from guessing.
  */
 async function upload(path, file) {
-  const response = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': file.type || 'application/octet-stream' },
-    body: file,
-    credentials: 'same-origin',
-  });
+  // Stay below the production proxy's per-request ceiling. Large files are
+  // assembled by the server, while each individual request remains small
+  // enough for nginx and the CDN.
+  const chunkBytes = 1536 * 1024;
+  if (file.size > chunkBytes) {
+    const sendChunk = async (offset, uploadId = null) => {
+      const end = Math.min(file.size, offset + chunkBytes);
+      const chunk = file.slice(offset, end, file.type);
+      const headers = {
+        'Content-Type': file.type || 'application/octet-stream',
+        'Content-Range': `bytes ${offset}-${end - 1}/${file.size}`,
+      };
+      if (uploadId) headers['X-Upload-Id'] = uploadId;
+      let response;
+      try {
+        response = await fetch(path, {
+          method: 'POST', headers, body: chunk, credentials: 'same-origin',
+        });
+      } catch (error) {
+        throw new ApiError(0, 'error.network', error.message);
+      }
+      const text = await response.text();
+      let payload = null;
+      try { payload = text ? JSON.parse(text) : null; } catch { payload = { message: text }; }
+      if (!response.ok) throw new ApiError(response.status, payload?.code, payload?.message);
+      return payload;
+    };
+
+    // The first chunk allocates the scoped upload id. Afterwards four chunks
+    // travel concurrently: quick on a fast server without flooding it with
+    // hundreds of simultaneous writes for a 1 GiB file.
+    const first = await sendChunk(0);
+    const uploadId = first.uploadId;
+    let finalPayload = null;
+    const offsets = [];
+    for (let offset = chunkBytes; offset < file.size; offset += chunkBytes) offsets.push(offset);
+    for (let i = 0; i < offsets.length; i += 4) {
+      const results = await Promise.all(offsets.slice(i, i + 4).map((offset) => sendChunk(offset, uploadId)));
+      finalPayload = results.find((payload) => payload?.complete) ?? finalPayload;
+    }
+    if (!finalPayload) throw new ApiError(0, 'error.network', 'upload did not complete');
+    return finalPayload;
+  }
+
+  let response;
+  try {
+    response = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      body: file,
+      credentials: 'same-origin',
+    });
+  } catch (error) {
+    throw new ApiError(0, 'error.network', error.message);
+  }
   const text = await response.text();
-  const payload = text ? JSON.parse(text) : null;
+  let payload = null;
+  try { payload = text ? JSON.parse(text) : null; } catch { payload = { message: text }; }
   if (!response.ok) throw new ApiError(response.status, payload?.code, payload?.message);
   return payload;
 }
@@ -90,6 +140,11 @@ export const api = {
   },
   login: async (identifier, password) => {
     const result = await request('/api/auth/login', { method: 'POST', body: { identifier, password } });
+    authenticated = true;
+    return result;
+  },
+  guest: async (locale) => {
+    const result = await request('/api/auth/guest', { method: 'POST', body: { locale } });
     authenticated = true;
     return result;
   },
@@ -134,6 +189,8 @@ export const api = {
   // --- game ---------------------------------------------------------------
   status: () => request('/api/status'),
   worlds: () => request('/api/worlds'),
+  createWorld: (data) => request('/api/worlds', { method: 'POST', body: data }),
+  joinWorld: (code) => request('/api/worlds/join', { method: 'POST', body: { code } }),
   world: (id) => request(`/api/worlds/${id}`),
   worldStatus: (id) => request(`/api/worlds/${id}/status`),
   terrain: (id) => request(`/api/worlds/${id}/terrain`, { raw: true }),
@@ -205,6 +262,8 @@ export const api = {
   news: (locale) => request(`/api/news${locale ? `?locale=${encodeURIComponent(locale)}` : ''}`),
   ads: (placement = 'menu') => request(`/api/ads?placement=${placement}`),
   adClick: (id) => request(`/api/ads/${id}/click`, { method: 'POST' }),
+  adReward: (id, characterId) =>
+    request(`/api/ads/${id}/reward`, { method: 'POST', body: { characterId } }),
   submitAd: (data) => request('/api/ads', { method: 'POST', body: data }),
   myAds: () => request('/api/ads/mine'),
   deleteAd: (id) => request(`/api/ads/${id}`, { method: 'DELETE' }),
@@ -243,6 +302,7 @@ export const api = {
   adminRevokeSessions: (id) => request(`/api/admin/users/${id}/revoke-sessions`, { method: 'POST' }),
   adminBan: (id, days, reason) => request(`/api/admin/users/${id}/ban`, { method: 'POST', body: { days, reason } }),
   adminUnban: (id) => request(`/api/admin/users/${id}/unban`, { method: 'POST' }),
+  adminGrantEconomy: (id, data) => request(`/api/admin/characters/${id}/economy`, { method: 'PATCH', body: data }),
   adminAssignRole: (userId, roleId) => request(`/api/admin/users/${userId}/roles/${roleId}`, { method: 'POST' }),
   adminRemoveRole: (userId, roleId) => request(`/api/admin/users/${userId}/roles/${roleId}`, { method: 'DELETE' }),
   adminSystem: () => request('/api/admin/system'),

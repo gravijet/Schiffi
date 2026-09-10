@@ -23,6 +23,7 @@ import { registerSystemRoutes } from './routes/system.js';
 import { registerGameplayRoutes, reloadEvents } from './routes/gameplay.js';
 import { registerContentRoutes } from './routes/content.js';
 import { MSG } from '@schiffi/shared/net/protocol.js';
+import { loadSystemSettings } from './services/systemSettings.js';
 
 const simulations = new Map();   // worldId -> Simulation
 
@@ -32,6 +33,7 @@ export async function bootstrap({ listen = true } = {}) {
   const db = await openDatabase();
   console.log(`[boot] database: ${db.dialect}`);
   await migrate({ verbose: true });
+  await loadSystemSettings();
   await syncPermissions();
   await pruneExpired();
 
@@ -40,9 +42,15 @@ export async function bootstrap({ listen = true } = {}) {
   const gateway = new Gateway({ simulations });
 
   registerAuthRoutes(http.router);
-  registerAdminRoutes(http.router);
+  registerAdminRoutes(http.router, { gateway });
   registerSuperadminRoutes(http.router, { staticRoot });
-  registerGameRoutes(http.router, { simulations });
+  registerGameRoutes(http.router, {
+    simulations,
+    startWorld: async (instance) => {
+      await reloadEvents(instance);
+      await startSimulation(instance, gateway);
+    },
+  });
   registerSystemRoutes(http.router, { gateway, simulations });
   registerGameplayRoutes(http.router, { gateway });
   registerContentRoutes(http.router);

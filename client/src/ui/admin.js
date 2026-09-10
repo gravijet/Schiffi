@@ -137,6 +137,30 @@ async function userDialog(userId, can) {
   };
   renderRoles(detail.roles ?? []);
 
+  const characterRows = h('div.stack');
+  for (const character of detail.characters ?? []) {
+    const amount = h('input', { type: 'number', step: 1, value: 100, style: { maxWidth: '150px' } });
+    const summary = h('div.small.muted', null,
+      `#${character.id} · ${character.coins} ${t('unit.coins')} · ${t('profile.level')} ${character.level}`);
+    characterRows.append(h('div.card.card--tight', null,
+      h('div.row.row--between', null,
+        h('div', null,
+          h('strong', null, character.name),
+          summary),
+        can('world.grant') ? h('div.row', null,
+          amount,
+          h('button.primary.small', {
+            onClick: async () => {
+              const delta = Math.trunc(Number(amount.value));
+              if (!Number.isSafeInteger(delta) || delta === 0) return;
+              const result = await api.adminGrantEconomy(character.id, { coins: delta });
+              character.coins = result.character.coins;
+              summary.textContent = `#${character.id} · ${character.coins} ${t('unit.coins')} · ${t('profile.level')} ${character.level}`;
+              toast(`${delta > 0 ? '+' : ''}${delta} ${t('unit.coins')}`, 'good');
+            },
+          }, t('common.apply'))) : null)));
+  }
+
   add(body,
     h('div.card', null,
       h('div.card__title', null, detail.user.username),
@@ -146,6 +170,9 @@ async function userDialog(userId, can) {
         h('dt', null, t('menu.language')), h('dd', null, detail.user.locale))),
     security,
     h('div.card', null, h('div.card__title', null, t('admin.roles')), roleRows),
+    h('div.card', null,
+      h('div.card__title', null, `${t('server.world')} / ${t('unit.coins')}`),
+      characterRows.childElementCount ? characterRows : h('p.small.muted', null, t('common.empty'))),
     h('div.card', null,
       h('div.card__title', null, t('common.actions')),
       h('div.row', { style: { flexWrap: 'wrap' } },

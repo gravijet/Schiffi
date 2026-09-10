@@ -8,11 +8,15 @@
  * nowhere, which is exactly what the specification forbids.
  */
 import { getDatabase } from '../db/index.js';
-import { badRequest, notFound, forbidden } from '../http/respond.js';
+import { badRequest, notFound, forbidden, tooMany } from '../http/respond.js';
 import { can } from '../services/rbac.js';
-import { storeMedia, readMedia, removeMedia } from '../services/media.js';
+import { storeMediaUpload, readMedia, removeMedia, mediaKind } from '../services/media.js';
+import { pipeline } from 'node:stream/promises';
 import { activeInterstitial, countImpression, countClick } from '../services/interstitial.js';
 import { LOCALES, isValidLocale, negotiateLocale } from '@schiffi/shared/i18n/index.js';
+import config from '../config.js';
+
+const AD_PLACEMENTS = new Set(['menu', 'sidebar', 'reward']);
 
 const TICKET_CATEGORIES = ['general', 'account', 'payment', 'bug', 'report', 'other'];
 const TICKET_PRIORITIES = ['low', 'normal', 'high'];
@@ -269,9 +273,9 @@ export function registerContentRoutes(router) {
     const title = trim(body.title, 90);
     const text = trim(body.body, 400);
     const target = trim(body.targetUrl, 300);
-    if (title.length < 3 || text.length < 10) throw badRequest();
+    if (title.length < 3) throw badRequest();
     // Only plain web links, and never a javascript: or data: URL.
-    if (!/^https:\/\/[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(target)) throw badRequest();
+    if (target && !/^https:\/\/[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(target)) throw badRequest();
 
     const db = getDatabase();
     const open = await db.get(
@@ -280,7 +284,7 @@ export function registerContentRoutes(router) {
 
     const id = await db.insert('ads', {
       user_id: ctx.user.id, title, body: text, target_url: target,
-      placement: body.placement === 'sidebar' ? 'sidebar' : 'menu',
+      placement: AD_PLACEMENTS.has(body.placement) ? body.placement : 'menu',
       status: 'pending', submitted_at: Date.now(),
     });
     return { id, status: 'pending' };
@@ -299,14 +303,28 @@ export function registerContentRoutes(router) {
       [ctx.params.id, ctx.user.id]);
     if (!row) throw notFound();
 
-    const stored = await storeMedia(await ctx.rawBody());
+    const stored = await storeMediaUpload(ctx.req, {
+      contentLength: ctx.req.headers['content-length'],
+      contentRange: ctx.req.headers['content-range'],
+      uploadId: ctx.req.headers['x-upload-id'],
+      scope: `ad:${row.id}:user:${ctx.user.id}`,
+    });
+    if (!stored.complete) return stored;
     await db.run("UPDATE ads SET image_path = ?, status = 'pending' WHERE id = ?", [stored.path, row.id]);
 
     if (row.image_path && row.image_path !== stored.path) {
       const stillUsed = await db.get('SELECT 1 AS x FROM ads WHERE image_path = ? LIMIT 1', [row.image_path]);
       if (!stillUsed) await removeMedia(row.image_path);
     }
-    return { image: `/media/ads/${stored.path}`, status: 'pending' };
+    const media = `/media/ads/${stored.path}`;
+    return {
+      media,
+      kind: stored.kind,
+      image: stored.kind === 'image' ? media : null,
+      video: stored.kind === 'video' ? media : null,
+      complete: true,
+      status: 'pending',
+    };
   }, { permission: 'ads.submit' });
 
   /** An advertiser's own adverts, with the figures they earned. */
@@ -332,7 +350,7 @@ export function registerContentRoutes(router) {
 
   router.get('/api/ads', async (ctx) => {
     const db = getDatabase();
-    const placement = ctx.query.placement === 'sidebar' ? 'sidebar' : 'menu';
+    const placement = AD_PLACEMENTS.has(ctx.query.placement) ? ctx.query.placement : 'menu';
     const rows = await db.all(
       "SELECT id, title, body, target_url, image_path FROM ads WHERE status = 'approved' AND placement = ? LIMIT 8",
       [placement]);
@@ -345,8 +363,10 @@ export function registerContentRoutes(router) {
     return {
       ads: rows.map((row) => ({
         id: row.id, title: row.title, body: row.body, targetUrl: row.target_url,
-        image: row.image_path ? `/media/ads/${row.image_path}` : null,
+        image: mediaKind(row.image_path) === 'image' ? `/media/ads/${row.image_path}` : null,
+        video: mediaKind(row.image_path) === 'video' ? `/media/ads/${row.image_path}` : null,
       })),
+      watchSeconds: placement === 'reward' ? config.game.adRewardWatchSeconds : null,
     };
   }, { auth: false });
 
@@ -359,6 +379,37 @@ export function registerContentRoutes(router) {
   }, { auth: false });
 
   /**
+   * Pay out for watching a 'reward'-placement advert to the end.
+   *
+   * The client times the watch and only calls this once the clip is done, but
+   * that is a courtesy, not the guard: the guard is the cooldown stamped on
+   * the character, which a replayed request cannot get around.
+   */
+  router.post('/api/ads/:id/reward', async (ctx) => {
+    const body = await ctx.body();
+    const db = getDatabase();
+    const character = await db.get(
+      'SELECT id, user_id, last_ad_reward_at FROM characters WHERE id = ? AND deleted_at IS NULL',
+      [body.characterId]);
+    if (!character) throw notFound();
+    if (String(character.user_id) !== String(ctx.user.id)) throw forbidden();
+
+    const cooldownMs = config.game.adRewardCooldownSeconds * 1000;
+    const waitMs = Number(character.last_ad_reward_at ?? 0) + cooldownMs - Date.now();
+    if (waitMs > 0) throw tooMany('ads.rewardCooldown', { retryInSeconds: Math.ceil(waitMs / 1000) });
+
+    const ad = await db.get(
+      "SELECT id FROM ads WHERE id = ? AND status = 'approved' AND placement = 'reward'", [ctx.params.id]);
+    if (!ad) throw notFound();
+
+    const coins = config.game.adRewardCoins;
+    await db.run('UPDATE characters SET coins = coins + ?, last_ad_reward_at = ? WHERE id = ?',
+      [coins, Date.now(), character.id]);
+    await db.run('UPDATE ads SET completions = completions + 1 WHERE id = ?', [ad.id]);
+    return { ok: true, coins };
+  });
+
+  /**
    * Advert and interstitial images.
    *
    * The name is the file's own content hash, so this may be cached forever -
@@ -367,12 +418,34 @@ export function registerContentRoutes(router) {
   router.get('/media/ads/:name', async (ctx) => {
     const media = await readMedia(ctx.params.name);
     if (!media) throw notFound();
-    ctx.res.writeHead(200, {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(String(ctx.req.headers.range ?? ''));
+    let start = 0;
+    let end = media.size - 1;
+    let status = 200;
+    if (match) {
+      if (!match[1] && match[2]) {
+        const suffix = Number(match[2]);
+        start = Math.max(0, media.size - suffix);
+        end = media.size - 1;
+      } else {
+        start = Number(match[1]);
+        end = match[2] ? Math.min(Number(match[2]), media.size - 1) : media.size - 1;
+      }
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start > end || start >= media.size) {
+        ctx.res.writeHead(416, { 'Content-Range': `bytes */${media.size}` });
+        ctx.res.end();
+        return undefined;
+      }
+      status = 206;
+    }
+    ctx.res.writeHead(status, {
       'Content-Type': media.type,
-      'Content-Length': media.data.length,
+      'Content-Length': end - start + 1,
+      'Accept-Ranges': 'bytes',
+      ...(status === 206 ? { 'Content-Range': `bytes ${start}-${end}/${media.size}` } : {}),
       'Cache-Control': 'public, max-age=31536000, immutable',
     });
-    ctx.res.end(media.data);
+    await pipeline(media.stream({ start, end }), ctx.res);
     return undefined;
   }, { auth: false });
 
@@ -394,6 +467,7 @@ export function registerContentRoutes(router) {
         body: current.body,
         image: current.image,
         targetUrl: current.targetUrl,
+        video: current.video,
         seconds: current.seconds,
       },
     };
@@ -432,18 +506,22 @@ export function registerContentRoutes(router) {
 
 /** One advert as both its owner and a reviewer see it. */
 function publicAd(row) {
+  const kind = mediaKind(row.image_path);
   return {
     id: row.id,
     title: row.title,
     body: row.body,
     targetUrl: row.target_url,
-    image: row.image_path ? `/media/ads/${row.image_path}` : null,
+    image: kind === 'image' ? `/media/ads/${row.image_path}` : null,
+    video: kind === 'video' ? `/media/ads/${row.image_path}` : null,
+    mediaKind: kind,
     placement: row.placement ?? 'menu',
     status: row.status,
     submittedAt: Number(row.submitted_at),
     reviewNote: row.review_note,
     impressions: Number(row.impressions ?? 0),
     clicks: Number(row.clicks ?? 0),
+    completions: Number(row.completions ?? 0),
   };
 }
 

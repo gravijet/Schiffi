@@ -184,6 +184,64 @@ export async function register({ email, username, password, locale, ip }) {
   return { userId, verification: delivery };
 }
 
+/**
+ * Create a real, server-side guest account.
+ *
+ * Guests use the same session and ownership checks as registered players;
+ * there is no anonymous gameplay back door. Their generated credentials are
+ * intentionally not usable for a later password login, and their display
+ * name comes from a large vocabulary plus a random suffix.
+ */
+export async function registerGuest({ locale, ip }) {
+  const db = getDatabase();
+  const chosenLocale = isValidLocale(locale) ? locale : DEFAULT_LOCALE;
+  const now = Date.now();
+
+  let username;
+  let usernameNorm;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    username = guestName();
+    usernameNorm = normUsername(username);
+    if (!(await db.get('SELECT 1 AS x FROM users WHERE username_norm = ?', [usernameNorm]))) break;
+    username = null;
+  }
+  if (!username) throw fail(503, 'error.generic', 'could not allocate a guest name');
+
+  const identity = randomBytes(18).toString('hex');
+  const email = `guest-${identity}@guest.invalid`;
+  const password = randomBytes(48).toString('base64url');
+  const userId = await db.insert('users', {
+    email, email_norm: email,
+    username, username_norm: usernameNorm,
+    password_hash: await hashPassword(password), password_algo: 'argon2id',
+    password_vault: null, password_vault_at: null, password_vault_key_id: null,
+    email_verified_at: now, is_guest: 1,
+    locale: chosenLocale, theme: 'auto', settings: '{}',
+    created_at: now, updated_at: now, last_login_at: now,
+  });
+  return { userId, username };
+}
+
+const GUEST_ADJECTIVES = [
+  'Flinker', 'Mutiger', 'Freier', 'Wacher', 'Stiller', 'Kühner', 'Wilder', 'Heller',
+  'Blauer', 'Goldener', 'Roter', 'Silberner', 'Nordischer', 'Schneller', 'Treuer', 'Kluger',
+  'Heiterer', 'Ruhiger', 'Starker', 'Neugieriger', 'Weiser', 'Tapferer', 'Junger', 'Alter',
+  'Klarer', 'Seltener', 'Ferner', 'Salziger', 'Kühler', 'Sonniger', 'Stürmischer', 'Sicherer',
+];
+const GUEST_NOUNS = [
+  'Albatros', 'Anker', 'Delfin', 'Kompass', 'Kormoran', 'Leuchtturm', 'Lotse', 'Möwe',
+  'Narwal', 'Orka', 'Pinguin', 'Seebär', 'Seestern', 'Segler', 'Steuermann', 'Wal',
+  'Wind', 'Kapitän', 'Matrose', 'Freibeuter', 'Kutter', 'Schoner', 'Kreuzer', 'Klippenläufer',
+  'Wellenreiter', 'Hafenfuchs', 'Nordlicht', 'Sturmvogel', 'Meerwolf', 'Küstenjäger', 'Riffhüter', 'Schatzsucher',
+];
+
+function guestName() {
+  const a = GUEST_ADJECTIVES[randomBytes(1)[0] % GUEST_ADJECTIVES.length];
+  const n = GUEST_NOUNS[randomBytes(1)[0] % GUEST_NOUNS.length];
+  const suffix = randomBytes(2).readUInt16BE(0).toString(36).toUpperCase().padStart(3, '0');
+  return `${a}-${n}-${suffix}`.slice(-24).replace(/^-/, '');
+}
+
 export async function login({ identifier, password, ip, userAgent }) {
   const db = getDatabase();
   const scope = `ip:${ip ?? 'unknown'}`;
@@ -417,8 +475,9 @@ export async function changePassword({ userId, currentPassword, newPassword, ip,
 export function publicUser(row) {
   return {
     id: row.id,
-    email: row.email,
+    email: row.is_guest ? null : row.email,
     username: row.username,
+    guest: Boolean(row.is_guest),
     locale: row.locale,
     theme: row.theme,
     // The client gets a URL, not a file name: the digest in the name makes it

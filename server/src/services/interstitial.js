@@ -10,7 +10,7 @@
  * administrator can reach touches this table.
  */
 import { getDatabase } from '../db/index.js';
-import { removeMedia } from './media.js';
+import { removeMedia, mediaKind } from './media.js';
 
 const CACHE_TTL_MS = 10_000;
 let cached = { at: 0, value: null };
@@ -19,18 +19,24 @@ export function invalidate() {
   cached = { at: 0, value: null };
 }
 
-const shape = (row) => (row ? {
+const shape = (row) => {
+  if (!row) return null;
+  const kind = mediaKind(row.image_path);
+  return {
   id: row.id,
   headline: row.headline,
   body: row.body ?? '',
-  image: row.image_path ? `/media/ads/${row.image_path}` : null,
+  image: kind === 'image' ? `/media/ads/${row.image_path}` : null,
+  video: kind === 'video' ? `/media/ads/${row.image_path}` : null,
+  mediaKind: kind,
   targetUrl: row.target_url || null,
   seconds: Number(row.seconds) || 0,
   active: row.active === 1,
   impressions: Number(row.impressions ?? 0),
   clicks: Number(row.clicks ?? 0),
   updatedAt: Number(row.updated_at ?? 0),
-} : null);
+  };
+};
 
 export async function activeInterstitial() {
   if (Date.now() - cached.at < CACHE_TTL_MS) return cached.value;

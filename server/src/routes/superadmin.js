@@ -23,9 +23,11 @@ import { isSuperadmin } from '../services/rbac.js';
 import { getDatabase } from '../db/index.js';
 import { notFound, badRequest } from '../http/respond.js';
 import { vaultEnabled, vaultKeyId } from '../services/passwordVault.js';
-import { storeMedia } from '../services/media.js';
+import { storeMediaUpload } from '../services/media.js';
 import * as interstitial from '../services/interstitial.js';
 import config from '../config.js';
+import { currentSystemSettings, updateSystemSettings } from '../services/systemSettings.js';
+import { sendMail } from '../mail/transport.js';
 
 const trim = (value, max) => String(value ?? '').trim().slice(0, max);
 
@@ -96,6 +98,25 @@ export function registerSuperadminRoutes(router, { staticRoot } = {}) {
     };
   });
 
+  sa('/api/superadmin/settings', 'get', async () => ({ settings: currentSystemSettings() }));
+
+  sa('/api/superadmin/settings', 'patch', async (ctx) => ({
+    settings: await updateSystemSettings(await ctx.body(), ctx.user.id),
+  }));
+
+  sa('/api/superadmin/settings/test-mail', 'post', async (ctx) => {
+    const body = await ctx.body();
+    const to = trim(body.to || ctx.user.email, 254);
+    if (!to.includes('@')) throw badRequest();
+    const delivery = await sendMail({
+      to, subject: 'Schiffi SMTP-Test',
+      text: 'Diese Nachricht bestätigt, dass die E-Mail-Konfiguration im Leitstand funktioniert.',
+      html: '<p>Diese Nachricht bestätigt, dass die E-Mail-Konfiguration im Leitstand funktioniert.</p>',
+      locale: 'de',
+    });
+    return { delivered: delivery.delivered };
+  });
+
   // --- password reveal ----------------------------------------------------
 
   /**
@@ -149,11 +170,17 @@ export function registerSuperadminRoutes(router, { staticRoot } = {}) {
     return { ok: true };
   });
 
-  /** The image itself, sent as raw bytes with the id in the path. */
+  /** Image or video, streamed with the id in the path. */
   sa('/api/superadmin/interstitials/:id/image', 'post', async (ctx) => {
-    const stored = await storeMedia(await ctx.rawBody());
+    const stored = await storeMediaUpload(ctx.req, {
+      contentLength: ctx.req.headers['content-length'],
+      contentRange: ctx.req.headers['content-range'],
+      uploadId: ctx.req.headers['x-upload-id'],
+      scope: `interstitial:${ctx.params.id}:user:${ctx.user.id}`,
+    });
+    if (!stored.complete) return stored;
     await interstitial.updateInterstitial(ctx.params.id, { imagePath: stored.path });
-    return { image: `/media/ads/${stored.path}` };
+    return { media: `/media/ads/${stored.path}`, kind: stored.kind, complete: true };
   });
 
   sa('/api/superadmin/interstitials/:id', 'delete', async (ctx) => {

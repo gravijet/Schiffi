@@ -51,12 +51,12 @@ export class GameUI {
     this.minimapWrap = h('div#minimap-wrap', null,
       h('canvas#minimap', { width: 256, height: 160 }));
 
-    this.shipPanel = panel({ id: 'panel-left', title: t('ship.title'), body: h('div') });
-    this.portPanel = panel({ id: 'panel-right', title: t('port.title'), body: h('div') });
+    this.shipPanel = panel({ id: 'panel-left', title: t('ship.title'), body: h('div'), collapsed: true });
+    this.portPanel = panel({ id: 'panel-right', title: t('port.title'), body: h('div'), collapsed: true });
     this.chatPanel = panel({
       id: 'panel-bottom',
       title: t('chat.title'),
-      collapsed: !settings.get('chatOpen'),
+      collapsed: true,
       onToggle: (collapsed) => settings.set('chatOpen', !collapsed),
       body: this.buildChat(),
     });
@@ -96,9 +96,7 @@ export class GameUI {
       stat(t('hud.coins'), character ? tc(character.coins) : '—', 'stat-coins'),
       stat(t('hud.cargo'), '—', 'stat-cargo'),
       stat(t('hud.hull'), '—', 'stat-hull'),
-      stat(t('hud.crew'), character ? String(character.crew?.length ?? 0) : '—', 'stat-crew'),
       stat(t('hud.speed'), '0', 'stat-speed'),
-      stat(t('hud.time'), '—', 'stat-time'),
       h('div.grow'),
       h('button.icon-btn', { title: t('menu.settings'), onClick: () => this.openSettings() }, '⚙'),
       h('button.icon-btn', { title: t('common.back'), onClick: () => this.onLeave?.() }, '⏻'),
@@ -188,17 +186,11 @@ export class GameUI {
       docked
         ? h('button.primary#act-port', { onClick: () => this.leavePort() }, t('port.leave'))
         : h('button.primary#act-port', { onClick: () => this.dockNearby() }, t('port.enter')),
-      h('button#act-ship', { onClick: () => this.toggleShipPanel() }, t('ship.title')),
-      h('button#act-market', { onClick: () => this.togglePortPanel() }, t('port.market')),
-      // Ashore and gunnery only make sense at sea; the exchange only at a
-      // berth. Showing the rest would be a lie.
-      docked ? null : h('button#act-explore', { onClick: () => goAshore(this) }, t('explore.expedition')),
-      docked ? null : h('button#act-combat', { onClick: () => this.openCombat() }, t('combat.title')),
-      docked ? null : h('button#act-trade', { onClick: () => openTradePicker(this) }, t('trade.propose')),
+      docked
+        ? h('button#act-market', { onClick: () => this.togglePortPanel() }, t('port.market'))
+        : h('button#act-explore', { onClick: () => goAshore(this) }, t('explore.expedition')),
       h('button#act-missions', { onClick: () => this.openMissions() }, t('mission.title')),
-      docked ? h('button#act-exchange', { onClick: () => this.openExchange() }, t('market.title')) : null,
       h('button#act-more', { onClick: () => this.openMore() }, t('common.more')),
-      h('button#act-chat', { onClick: () => this.chatPanel.classList.toggle('is-collapsed') }, t('chat.title')),
     );
   }
 
@@ -657,6 +649,65 @@ export class GameUI {
       actions: [{ label: t('common.close') }] });
   }
 
+  /**
+   * Watch a 'reward'-placement advert for coins.
+   *
+   * The claim button stays disabled for the clip's configured length: the
+   * server enforces the real cooldown regardless, but a button a captain can
+   * only press once the ad has actually run is the honest version of the
+   * same rule, not a duplicate of it.
+   */
+  openAdReward() {
+    const character = this.character;
+    if (!character) return;
+
+    api.ads('reward').then(({ ads, watchSeconds }) => {
+      if (!ads.length) { toast(t('ads.rewardNone'), 'info'); return; }
+      const ad = ads[Math.floor(Math.random() * ads.length)];
+      let left = Math.max(0, Number(watchSeconds) || 15);
+
+      const claimBtn = h('button.primary', { disabled: left > 0 });
+      const label = () => {
+        claimBtn.textContent = left > 0 ? t('ads.watching', { seconds: left }) : t('ads.claim');
+      };
+      label();
+
+      const timer = left > 0 ? setInterval(() => {
+        left -= 1;
+        if (left <= 0) { left = 0; claimBtn.disabled = false; clearInterval(timer); }
+        label();
+      }, 1000) : null;
+
+      claimBtn.addEventListener('click', async () => {
+        claimBtn.disabled = true;
+        try {
+          const result = await api.adReward(ad.id, character.id);
+          toast(t('ads.rewardClaimed', { coins: result.coins }), 'good');
+          this.refreshCharacter();
+        } catch (error) {
+          const seconds = error.details?.retryInSeconds;
+          toast(seconds ? t('ads.rewardCooldownFor', { seconds }) : t(error.code ?? 'error.generic'), 'bad');
+        }
+        dialog.close();
+      });
+
+      const dialog = modal({
+        title: t('ads.watchForCoins'),
+        body: h('div.stack', null,
+          ad.video
+            ? h('video.promo__image', { src: ad.video, autoplay: true, muted: true, playsInline: true, controls: true })
+            : ad.image
+              ? h('img.promo__image', { src: ad.image, alt: ad.title })
+              : null,
+          h('h3', null, ad.title),
+          ad.body ? h('p.small.muted', null, ad.body) : null,
+          claimBtn),
+        actions: [{ label: t('common.cancel') }],
+        onClose: () => { if (timer) clearInterval(timer); },
+      });
+    }).catch((error) => toast(t(error.code ?? 'error.generic'), 'bad'));
+  }
+
   /** The screens that do not earn a permanent button of their own. */
   openMore() {
     const entry = (id, label, open) =>
@@ -664,11 +715,19 @@ export class GameUI {
     const dialog = modal({
       title: t('common.more'),
       body: h('div.stack', null,
+        entry('more-ship', t('ship.title'), () => this.toggleShipPanel()),
+        this.character?.docked
+          ? entry('more-exchange', t('market.title'), () => this.openExchange())
+          : entry('more-combat', t('combat.title'), () => this.openCombat()),
+        this.character?.docked ? null
+          : entry('more-trade', t('trade.propose'), () => openTradePicker(this)),
+        entry('more-chat', t('chat.title'), () => this.chatPanel.classList.remove('is-collapsed')),
         entry('more-friends', t('social.friends'), () => this.openFriends()),
         entry('more-guild', t('guild.title'), () => this.openGuild()),
         entry('more-company', t('company.title'), () => this.openCompany()),
         entry('more-port', t('warehouse.title'), () => this.openPortServices()),
         entry('more-album', t('explore.album'), () => this.openAlbum()),
+        entry('more-adreward', t('ads.watchForCoins'), () => this.openAdReward()),
         entry('more-tutorial', t('tutorial.title'), () => this.tutorial.resume()),
         entry('more-code', t('code.title'), () => this.openCodeDialog()),
         entry('more-settings', t('menu.settings'), () => this.openSettings())),

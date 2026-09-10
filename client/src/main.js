@@ -105,6 +105,7 @@ async function main() {
 
   progress(1, '');
   boot?.remove();
+  showMobileNotice();
 
   // 4. The advert in front of the site, if the operator has put one there.
   if (promo) await showInterstitial(promo);
@@ -130,17 +131,43 @@ async function main() {
 }
 
 /**
+ * A captain on a phone should know what they are getting into.
+ *
+ * Touch controls exist and the game is playable on a phone, but a small
+ * screen and a virtual joystick are a worse way to sail than a keyboard and a
+ * proper map view - the operator wants that said plainly, not discovered the
+ * hard way. Dismissing it only lasts the session: a coarse pointer is asked
+ * about every fresh visit, never nagged at twice in the same one.
+ */
+function showMobileNotice() {
+  if (!matchMedia('(pointer: coarse)').matches) return;
+  try { if (sessionStorage.getItem('schiffi:mobileNoticeDismissed')) return; } catch { /* private mode */ }
+
+  const dismiss = () => {
+    banner.remove();
+    try { sessionStorage.setItem('schiffi:mobileNoticeDismissed', '1'); } catch { /* private mode */ }
+  };
+  const banner = h('div.mobile-notice', null,
+    h('span', null, t('app.mobileNotice')),
+    h('button.icon-btn', { onClick: dismiss, title: t('common.close') }, '✕'));
+  document.body.append(banner);
+}
+
+/**
  * The advert the operator has put in front of the site.
  *
- * Data saver means the visitor asked not to download decoration, and this is
- * the largest optional thing on the page; a failure is silent, because a
- * broken advert must never be the reason somebody cannot reach the game.
+ * Data saver suppresses the potentially large medium, not the advert itself:
+ * a text-only interstitial is still small and the operator's active campaign
+ * remains truthful. A failure is silent because advertising must never trap
+ * somebody outside the game.
  */
 async function fetchInterstitial() {
-  if (settings.get('dataSaver')) return null;
   try {
     const { interstitial } = await api.interstitial();
-    return interstitial ?? null;
+    if (!interstitial) return null;
+    return settings.get('dataSaver')
+      ? { ...interstitial, image: null, video: null }
+      : interstitial;
   } catch { return null; }
 }
 
@@ -181,7 +208,12 @@ function showInterstitial(promo) {
     };
 
     const card = h('div.promo__card', null,
-      promo.image
+      promo.video
+        ? h('video.promo__image', {
+          src: promo.video, controls: true, autoplay: true, muted: true, playsInline: true,
+          onClick: (event) => event.stopPropagation(),
+        })
+        : promo.image
         ? h('img.promo__image', {
           src: promo.image, alt: promo.headline,
           onClick: visit,
@@ -308,7 +340,12 @@ async function startGame(character) {
   state.game.renderShipPanel();
   state.game.refreshPort();
 
-  state.input = new InputManager({ settings });
+  state.input = new InputManager({
+    settings, position: () => socket.selfPosition(), terrain: state.terrain,
+  });
+  state.input.addEventListener('destination', (event) => {
+    if (state.renderer) state.renderer.destination = event.detail;
+  });
   state.input.attachJoystick(document.getElementById('joystick'));
   attachPointerControls(canvas);
   attachShortcuts();
@@ -471,18 +508,24 @@ async function refreshCharacter() {
 // ---------------------------------------------------------------------------
 
 function attachPointerControls(canvas) {
+  let pointerActive = false;
   let dragging = false;
+  let startX = 0;
+  let startY = 0;
   let lastX = 0;
   let lastY = 0;
 
   canvas.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0) return;
-    dragging = true;
-    lastX = event.clientX;
-    lastY = event.clientY;
+    if (event.button !== 0 || !event.isPrimary) return;
+    pointerActive = true;
+    dragging = false;
+    startX = lastX = event.clientX;
+    startY = lastY = event.clientY;
     canvas.setPointerCapture(event.pointerId);
   });
   canvas.addEventListener('pointermove', (event) => {
+    if (!pointerActive || !event.isPrimary) return;
+    if (!dragging && Math.hypot(event.clientX - startX, event.clientY - startY) > 6) dragging = true;
     if (!dragging) return;
     const zoom = state.renderer.camera.zoom;
     state.renderer.camera.x -= (event.clientX - lastX) / zoom;
@@ -491,9 +534,22 @@ function attachPointerControls(canvas) {
     lastX = event.clientX;
     lastY = event.clientY;
   });
-  const endDrag = () => { dragging = false; };
+  const endDrag = (event) => {
+    if (!pointerActive || !event.isPrimary) return;
+    if (!dragging) {
+      const rect = canvas.getBoundingClientRect();
+      const target = state.renderer.screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
+      state.input.setDestination(target);
+      state.renderer.follow = true;
+    }
+    pointerActive = false;
+    dragging = false;
+  };
   canvas.addEventListener('pointerup', endDrag);
-  canvas.addEventListener('pointercancel', endDrag);
+  canvas.addEventListener('pointercancel', () => {
+    pointerActive = false;
+    dragging = false;
+  });
 
   canvas.addEventListener('wheel', (event) => {
     event.preventDefault();

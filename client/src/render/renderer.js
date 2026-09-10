@@ -40,6 +40,7 @@ export class Renderer {
     this.storms = [];
     this.wrecks = [];
     this.self = null;
+    this.destination = null;
     this.wind = { a: 0, s: 0 };
     this.daylight = 1;
 
@@ -200,6 +201,7 @@ export class Renderer {
     this.drawWrecks(ctx, g);
     this.drawEntities(ctx, g);
     this.drawSelf(ctx, g);
+    this.drawDestination(ctx);
     if (g.fog > 0) this.drawFog(ctx, g);
     if (g.lighting > 0) this.drawLighting(ctx, g);
     if (g.weatherEffects > 0) this.drawWeatherOverlay(ctx, g, dt);
@@ -452,6 +454,28 @@ export class Renderer {
       ctx.stroke();
       ctx.restore();
     }
+  }
+
+  drawDestination(ctx) {
+    if (!this.destination) return;
+    const p = this.worldToScreen(this.destination.x, this.destination.y);
+    if (p.x < -30 || p.x > this.viewWidth + 30 || p.y < -30 || p.y > this.viewHeight + 30) return;
+    const pulse = 1 + Math.sin(this.time * 6) * 0.12;
+    ctx.save();
+    ctx.strokeStyle = '#35d6b4';
+    ctx.fillStyle = 'rgba(53, 214, 180, .18)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 11 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(p.x - 16, p.y); ctx.lineTo(p.x - 7, p.y);
+    ctx.moveTo(p.x + 7, p.y); ctx.lineTo(p.x + 16, p.y);
+    ctx.moveTo(p.x, p.y - 16); ctx.lineTo(p.x, p.y - 7);
+    ctx.moveTo(p.x, p.y + 7); ctx.lineTo(p.x, p.y + 16);
+    ctx.stroke();
+    ctx.restore();
   }
 
   /**

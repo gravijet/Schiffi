@@ -40,7 +40,7 @@ export const unauthorized = (code = 'error.unauthorized') => new HttpError(401, 
 export const forbidden = (code = 'error.forbidden') => new HttpError(403, code);
 export const notFound = (code = 'error.notFound') => new HttpError(404, code);
 export const conflict = (code = 'error.conflict') => new HttpError(409, code);
-export const tooMany = (code = 'error.rateLimited') => new HttpError(429, code);
+export const tooMany = (code = 'error.rateLimited', details) => new HttpError(429, code, code, details);
 
 export function sendError(res, error, { exposeStack = false } = {}) {
   const status = Number(error.status) || 500;
