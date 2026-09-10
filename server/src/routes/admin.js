@@ -1,18 +1,18 @@
 /**
  * Administration endpoints.
  *
- * Every route is gated by a granular permission, and every mutation writes to
- * the audit log.
+ * Every route is gated by a granular permission from services/permissions.js,
+ * and that catalogue is the whole world as far as this file is concerned.
+ * Nothing here can reach a superadmin-only ability, and nothing here mentions
+ * that such abilities exist - reading a password, for instance, lives in
+ * routes/superadmin.js and answers 404 to everyone else.
  *
- * One route here returns password material: POST /users/:id/password/reveal,
- * behind `users.password_reveal`. It exists because this installation is
- * operated that way; see services/passwordVault.js for the trade-off it makes.
- * `GET /users/:id/security` still reports status only.
+ * There is no audit trail. It was removed on the operator's instruction; the
+ * consequence is that these actions leave no record of who performed them.
  */
 import * as rbac from '../services/rbac.js';
 import * as auth from '../services/auth.js';
 import { PERMISSIONS } from '../services/permissions.js';
-import { readAuditLog, audit } from '../services/audit.js';
 import { getDatabase } from '../db/index.js';
 import { badRequest, notFound } from '../http/respond.js';
 
@@ -31,24 +31,24 @@ export function registerAdminRoutes(router) {
     const id = await rbac.createRole({
       key: body.key, name: body.name, description: body.description,
       permissions: body.permissions ?? [], priority: body.priority ?? 100,
-    }, ctx.actor);
+    });
     return { id };
   }, { permission: 'roles.create' });
 
   router.post('/api/admin/roles/:id/duplicate', async (ctx) => {
     const body = await ctx.body();
     if (!body.key) throw badRequest();
-    const id = await rbac.duplicateRole(ctx.params.id, body.key, body.name, ctx.actor);
+    const id = await rbac.duplicateRole(ctx.params.id, body.key, body.name);
     return { id };
   }, { permission: 'roles.create' });
 
   router.patch('/api/admin/roles/:id', async (ctx) => {
-    await rbac.updateRole(ctx.params.id, await ctx.body(), ctx.actor);
+    await rbac.updateRole(ctx.params.id, await ctx.body());
     return { ok: true };
   }, { permission: 'roles.edit' });
 
   router.delete('/api/admin/roles/:id', async (ctx) => {
-    await rbac.deleteRole(ctx.params.id, ctx.actor);
+    await rbac.deleteRole(ctx.params.id);
     return { ok: true };
   }, { permission: 'roles.delete' });
 
@@ -58,7 +58,7 @@ export function registerAdminRoutes(router) {
   }, { permission: 'roles.assign' });
 
   router.delete('/api/admin/users/:userId/roles/:roleId', async (ctx) => {
-    await rbac.removeRole(ctx.params.userId, ctx.params.roleId, ctx.actor);
+    await rbac.removeRole(ctx.params.userId, ctx.params.roleId);
     return { ok: true };
   }, { permission: 'roles.assign' });
 
@@ -104,35 +104,13 @@ export function registerAdminRoutes(router) {
   }, { permission: 'users.view' });
 
   /**
-   * Security status. Intentionally free of password material - see
-   * services/auth.js. The `passwordReadable: false` field is part of the
-   * response contract so an operator can see the guarantee, not infer it.
+   * Security status: when the account last signed in, how many sessions it
+   * has, whether it is locked out. No password material of any kind, and no
+   * field that would betray that reading one is possible elsewhere.
    */
   router.get('/api/admin/users/:id/security', async (ctx) => ({
     status: await auth.securityStatus(ctx.params.id),
   }), { permission: 'users.security_status' });
-
-  /**
-   * Show a stored password in clear text.
-   *
-   * POST, not GET: this must never end up in a browser history entry, a proxy
-   * log or a shared URL. The response is marked no-store for the same reason.
-   * Every call is written to the audit log BEFORE the value is returned, so a
-   * reveal is recorded even if the response never reaches the client.
-   */
-  router.post('/api/admin/users/:id/password/reveal', async (ctx) => {
-    const result = await auth.revealPassword(ctx.params.id);
-    await audit(ctx.actor, 'user.password_revealed', 'user', String(ctx.params.id),
-      { granted: result.password !== null, reason: result.reason ?? 'ok' });
-
-    ctx.res.setHeader('Cache-Control', 'no-store, max-age=0');
-    ctx.res.setHeader('Pragma', 'no-cache');
-    return {
-      password: result.password,
-      reason: result.reason,
-      storedAt: result.storedAt ?? null,
-    };
-  }, { permission: 'users.password_reveal' });
 
   router.post('/api/admin/users/:id/reset-password', async (ctx) => {
     const result = await auth.triggerPasswordReset(ctx.params.id, ctx.actor);
@@ -161,14 +139,4 @@ export function registerAdminRoutes(router) {
     await auth.deleteAccount(ctx.params.id, { actor: { ...ctx.actor, staff: true } });
     return { ok: true };
   }, { permission: 'users.delete' });
-
-  // --- audit --------------------------------------------------------------
-  router.get('/api/admin/audit', async (ctx) => ({
-    entries: await readAuditLog({
-      limit: Number(ctx.query.limit) || 100,
-      before: ctx.query.before ? Number(ctx.query.before) : null,
-      actorId: ctx.query.actor ?? null,
-      action: ctx.query.action ?? null,
-    }),
-  }), { permission: 'audit.view' });
 }

@@ -45,6 +45,26 @@ async function request(path, { method = 'GET', body, signal, raw = false } = {})
 }
 
 /**
+ * Send a file as its own body.
+ *
+ * The Content-Type is the browser's own reading of the file; the server does
+ * not trust it and checks the bytes, but sending something plausible keeps
+ * intermediaries from guessing.
+ */
+async function upload(path, file) {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    body: file,
+    credentials: 'same-origin',
+  });
+  const text = await response.text();
+  const payload = text ? JSON.parse(text) : null;
+  if (!response.ok) throw new ApiError(response.status, payload?.code, payload?.message);
+  return payload;
+}
+
+/**
  * Cached sign-in state.
  *
  * Optional account syncs (storing the chosen language, for instance) consult
@@ -183,9 +203,19 @@ export const api = {
     request(`/api/support/tickets/${id}/messages`, { method: 'POST', body: { body } }),
   closeTicket: (id) => request(`/api/support/tickets/${id}/close`, { method: 'POST' }),
   news: (locale) => request(`/api/news${locale ? `?locale=${encodeURIComponent(locale)}` : ''}`),
-  ads: () => request('/api/ads'),
+  ads: (placement = 'menu') => request(`/api/ads?placement=${placement}`),
   adClick: (id) => request(`/api/ads/${id}/click`, { method: 'POST' }),
   submitAd: (data) => request('/api/ads', { method: 'POST', body: data }),
+  myAds: () => request('/api/ads/mine'),
+  deleteAd: (id) => request(`/api/ads/${id}`, { method: 'DELETE' }),
+  // The picture goes up as its own bytes rather than base64 in JSON: a third
+  // more bytes on the wire for no gain, and the server checks the magic
+  // number either way.
+  uploadAdImage: (id, file) => upload(`/api/ads/${id}/image`, file),
+
+  // The advert in front of the site. Public, and null when there is none.
+  interstitial: () => request('/api/interstitial'),
+  interstitialClick: (id) => request(`/api/interstitial/${id}/click`, { method: 'POST' }),
 
   adminTickets: (status) => request(`/api/admin/support/tickets${status ? `?status=${status}` : ''}`),
   adminUpdateTicket: (id, data) =>
@@ -210,15 +240,11 @@ export const api = {
   adminUser: (id) => request(`/api/admin/users/${id}`),
   adminUserSecurity: (id) => request(`/api/admin/users/${id}/security`),
   adminTriggerReset: (id) => request(`/api/admin/users/${id}/reset-password`, { method: 'POST' }),
-  // POST on purpose: a password must not travel in a URL that a proxy,
-  // a browser history entry or a server log would keep.
-  adminRevealPassword: (id) => request(`/api/admin/users/${id}/password/reveal`, { method: 'POST' }),
   adminRevokeSessions: (id) => request(`/api/admin/users/${id}/revoke-sessions`, { method: 'POST' }),
   adminBan: (id, days, reason) => request(`/api/admin/users/${id}/ban`, { method: 'POST', body: { days, reason } }),
   adminUnban: (id) => request(`/api/admin/users/${id}/unban`, { method: 'POST' }),
   adminAssignRole: (userId, roleId) => request(`/api/admin/users/${userId}/roles/${roleId}`, { method: 'POST' }),
   adminRemoveRole: (userId, roleId) => request(`/api/admin/users/${userId}/roles/${roleId}`, { method: 'DELETE' }),
-  adminAudit: (query = '') => request(`/api/admin/audit${query}`),
   adminSystem: () => request('/api/admin/system'),
   adminCloudflare: () => request('/api/admin/integrations/cloudflare'),
 };

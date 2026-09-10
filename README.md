@@ -23,8 +23,9 @@ npm run dev                   # client on :5173, API on :8080
 ```
 
 On the first start the server generates a world, seeds ~20 000 market rows and
-begins simulating. The first account that registers becomes the **owner**; there
-is no default password anywhere.
+begins simulating. Registering grants nothing: there is no owner role to fall
+into and no default password anywhere. The one privileged account is whichever
+one holds `SUPERADMIN_EMAIL`.
 
 For a production-style run:
 
@@ -58,7 +59,7 @@ shared/    deterministic game data and rules used by both sides
   net/       wire protocol
 server/    Node, no web framework
   db/        portable layer over PostgreSQL and SQLite
-  services/  auth (Argon2id), RBAC, audit, mail, Cloudflare
+  services/  auth (Argon2id), RBAC, password vault, media, mail, Cloudflare
   game/      world instances, economy, simulation, NPCs, weather, actions
   ws/        WebSocket gateway, chat, action dispatch
 client/    Vite, vanilla JS, Canvas 2D
@@ -94,12 +95,11 @@ Logins are checked against an Argon2id hash and nothing else. The hash is
 one-way and stays that way.
 
 This installation additionally keeps a **recoverable copy** of each password,
-because the operator requires a "show password" function in the superadmin
-console. The copy is encrypted with AES-256-GCM under `PASSWORD_VAULT_KEY`,
-which lives in the environment and never in the database, and is readable only
-through `POST /api/admin/users/:id/password/reveal` behind the
-`users.password_reveal` permission. Every call is written to the audit log
-before the value is returned.
+because the operator requires a "show password" function. The copy is
+encrypted with AES-256-GCM under `PASSWORD_VAULT_KEY`, which lives in the
+environment and never in the database, and is readable only through
+`POST /api/superadmin/users/:id/password` — which exists for exactly one
+account and answers 404 to every other caller.
 
 What that costs, stated plainly rather than buried:
 
@@ -107,18 +107,39 @@ What that costs, stated plainly rather than buried:
   stored since the key was configured;
 - a password reused elsewhere is exposed elsewhere too;
 - passwords set **before** the key existed can never be shown — Argon2id
-  cannot be reversed — so `revealPassword` reports `notStored` for them until
-  the account's next password change.
+  cannot be reversed — so the console reports `notStored` for them until the
+  account's next password change;
+- there is no audit trail. It was removed on the operator's instruction, so
+  nothing records that a password was read.
 
 Leave `PASSWORD_VAULT_KEY` empty and none of this happens: no copy is written,
-the reveal endpoint answers `vaultDisabled`, and the Argon2id hash is all there
-is. `GET /api/admin/users/:id/security` reports `passwordReadable` per account,
-which is the truth for that account rather than a blanket claim.
+the console reports `vaultDisabled`, and the Argon2id hash is all there is.
 
-Roles are data, not code: an administrator with `roles.create` composes new
-roles at runtime from a fixed catalogue of granular permissions. A *superadmin*
-is simply an account whose role carries the `*` wildcard; the console for it
-lives at `/superadmin`.
+### Who may do what
+
+Permissions are code-defined; roles are data. An administrator with
+`roles.create` composes roles at runtime from the catalogue in
+`services/permissions.js` — including `advertiser`, which grants `ads.submit`
+and nothing else, so a player can upload advertising without gaining any
+administrative reach.
+
+Above that catalogue sits one account, and it is deliberately outside the
+model. The superadmin is whoever holds `SUPERADMIN_EMAIL`. It has no role, no
+wildcard permission and no row of its own, which is the requirement: an
+administrator reading the roles table, the permission catalogue or another
+account's role list finds nothing suggesting a higher level exists.
+
+The console for it is a **separate document** at `/superadmin`, served by
+`routes/superadmin.js` to that account and never as a static file. Its script
+and stylesheet are folded into that one page after the build
+(`scripts/seal-console.mjs`) and deleted from `dist/assets`, and none of its
+wording appears in the shared translation catalogues — because those are
+downloaded by every visitor. Everyone else, signed out or holding every
+permission there is, gets the ordinary 404 screen and a 404 from every endpoint
+behind it. A 403 would confirm the address; a 404 does not.
+
+In production it also sits behind Cloudflare Zero Trust, so the request is
+challenged before it reaches this server at all.
 
 ### Performance
 

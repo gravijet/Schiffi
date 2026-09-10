@@ -13,7 +13,6 @@
  *     explicitly to touch those.
  */
 import config from '../config.js';
-import { audit } from './audit.js';
 
 const API = 'https://api.cloudflare.com/client/v4';
 
@@ -120,8 +119,6 @@ export async function upsertDnsRecord(record, { zoneId = config.cloudflare.zoneI
     result = await request(`/zones/${zoneId}/dns_records`, { method: 'POST', body: payload });
   }
 
-  await audit(actor, existing ? 'cloudflare.dns_update' : 'cloudflare.dns_create',
-    'dns', `${record.type} ${record.name}`, { content: record.content, zoneId });
   return { changed: true, id: result.id, type: result.type, name: result.name, content: result.content };
 }
 
@@ -131,7 +128,6 @@ export async function deleteDnsRecord(recordId, { zoneId = config.cloudflare.zon
   if (!record) throw new CloudflareError('record not found');
   assertSafeRecord(record, allowMailRecords);
   await request(`/zones/${zoneId}/dns_records/${recordId}`, { method: 'DELETE' });
-  await audit(actor, 'cloudflare.dns_delete', 'dns', `${record.type} ${record.name}`, { zoneId });
   return { deleted: true };
 }
 

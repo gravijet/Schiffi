@@ -121,6 +121,13 @@ export class HttpServer {
         return;
       }
 
+      // The single-page fallback must not swallow the API. An unknown /api/
+      // path used to fall through to serveStatic and come back as the HTML
+      // shell with a 200, so a client calling a route that no longer exists
+      // was told it had succeeded and handed a web page to parse as JSON.
+      if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/media/')) {
+        throw new HttpError(404, 'error.notFound');
+      }
       if (this.staticRoot) return await this.serveStatic(req, res, url);
       throw new HttpError(404, 'error.notFound');
     } catch (error) {
@@ -160,6 +167,10 @@ export class HttpServer {
 
   async serveStatic(req, res, url) {
     const root = this.staticRoot;
+    // The superadmin console's shell is served by routes/superadmin.js, to one
+    // account, and by nothing else. Serving it as an ordinary static file
+    // would hand the whole interface to anyone who guessed the filename.
+    if (/(^|\/)console\.html$/i.test(url.pathname)) throw new HttpError(404, 'error.notFound');
     // normalize() collapses ".." before we join, so a crafted path cannot
     // escape the static root.
     const rel = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');

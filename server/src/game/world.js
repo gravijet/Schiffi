@@ -19,7 +19,6 @@ import { WAREHOUSE_BASE_CAPACITY, WAREHOUSE_DEPOSIT, warehouseRent }
   from '@schiffi/shared/data/costs.js';
 import { addCargo, removeCargo, cargoUsage } from './characters.js';
 import { awardXp } from './progression.js';
-import { audit } from '../services/audit.js';
 
 const fail = (code, message = code) => new HttpError(400, code, message);
 
@@ -443,8 +442,6 @@ export async function digTreasure({ instance, characterId, userId, payload }) {
     await tx.run('UPDATE treasures SET found_by = ?, found_at = ? WHERE id = ?',
       [characterId, Date.now(), treasure.id]);
     await awardXp(tx, characterId, 250);
-    await audit({ userId: character.user_id }, 'explore.treasure_found', 'treasure',
-      String(treasure.id), { player: character.name }, { db: tx });
 
     return { treasureId: treasure.id, taken };
   });

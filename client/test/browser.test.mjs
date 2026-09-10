@@ -29,6 +29,10 @@ process.env.PORT = '0';
 process.env.SESSION_SECRET = 'browser-test-'.padEnd(64, 'y');
 process.env.DEFAULT_WORLD_SEED = '20260910';
 process.env.SMTP_HOST = '';
+// The account this suite registers is the one the server treats as the
+// superadmin, so the console can be driven for real rather than described.
+process.env.SUPERADMIN_EMAIL = 'browser@example.org';
+process.env.PASSWORD_VAULT_KEY = 'b'.repeat(64);
 
 // Empty database, SQLite or PostgreSQL depending on TEST_DATABASE_URL.
 await useTestDatabase(TEST_DB);
@@ -68,12 +72,86 @@ test('the client boots and offers all nine language variants', async () => {
   assert.equal(await page.locator('.lang-btn').count(), 9);
 });
 
-test('choosing a language renders the menu in that language', async () => {
+/**
+ * The regression that mattered most.
+ *
+ * The language dialog used to be opened *before* the boot overlay came down,
+ * and the overlay sat on a higher layer - so a first-time visitor was shown a
+ * loading screen that waited for a click on a dialog they could not see, for
+ * ever. Nothing rendered, nothing errored, the site was simply unreachable.
+ * The two assertions here are the two halves of that: the picker is on screen,
+ * and the boot overlay is not.
+ */
+test('the first visit is not stuck behind the boot screen', async () => {
+  assert.equal(await page.locator('.lang-grid').isVisible(), true,
+    'the language picker is in the DOM but not visible');
+  assert.equal(await page.locator('#boot').count(), 0,
+    'the boot overlay is still covering the page');
+});
+
+test('choosing a language renders the site in that language', async () => {
   await page.locator('.lang-btn', { hasText: 'Deutsch' }).first().click();
   await page.waitForSelector('#menu-screen', { timeout: 20_000 });
-  const nav = await page.locator('.menu-nav').innerText();
+  const nav = await page.locator('.site-nav').innerText();
   assert.ok(nav.includes('Spielen'), `menu is not German: ${nav.slice(0, 140)}`);
-  assert.ok(nav.includes('Einstellungen'));
+  assert.ok(nav.includes('Support'));
+});
+
+/**
+ * Every screen is a page.
+ *
+ * Clicking changes the address, reloading that address lands on the same
+ * screen, and back goes back. An address nobody defined says so rather than
+ * quietly showing the home page.
+ */
+test('each screen has its own address, and the address works on its own', async () => {
+  for (const [label, path] of [['Support', '/support'], ['Neuigkeiten', '/news'], ['Ranglisten', '/leaderboard']]) {
+    await page.locator('.site-nav__link', { hasText: label }).first().click();
+    await page.waitForFunction((want) => location.pathname === want, path, { timeout: 5_000 });
+  }
+
+  await page.goBack();
+  await page.waitForFunction(() => location.pathname === '/news', null, { timeout: 5_000 });
+  assert.ok((await page.locator('.site-main').innerText()).includes('Neuigkeiten'));
+
+  const direct = await page.context().newPage();
+  await direct.goto(`${base}/support`, { waitUntil: 'domcontentloaded' });
+  await direct.waitForSelector('.site-main h2', { timeout: 20_000 });
+  assert.equal((await direct.locator('.site-main h2').innerText()).trim(), 'Support');
+
+  await direct.goto(`${base}/gibt-es-nicht`, { waitUntil: 'domcontentloaded' });
+  await direct.waitForSelector('.site-main h2', { timeout: 20_000 });
+  assert.equal((await direct.locator('.site-main h2').innerText()).trim(), '404');
+  await direct.close();
+
+  await page.goto(base, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('.site-nav', { timeout: 20_000 });
+});
+
+/**
+ * The console is not in this build.
+ *
+ * An administrator must not be able to find it by reading what the browser
+ * downloaded, so nothing the site ships may mention it - and /superadmin must
+ * answer with the same 404 screen as any other invented path.
+ */
+test('nothing the site ships mentions the superadmin console', async () => {
+  const sources = await page.evaluate(async () => {
+    const urls = performance.getEntriesByType('resource')
+      .map((entry) => entry.name)
+      .filter((name) => /\/assets\/.*\.(js|css)$/.test(name));
+    const bodies = await Promise.all(urls.map((url) => fetch(url).then((r) => r.text())));
+    return bodies.join('\n');
+  });
+  assert.ok(!/superadmin/i.test(sources), 'a downloaded asset names the superadmin console');
+  assert.ok(!/Leitstand/.test(sources), 'a downloaded asset carries the console wording');
+
+  const attempt = await page.context().newPage();
+  await attempt.goto(`${base}/superadmin`, { waitUntil: 'domcontentloaded' });
+  await attempt.waitForSelector('.site-main h2', { timeout: 20_000 });
+  assert.equal((await attempt.locator('.site-main h2').innerText()).trim(), '404',
+    '/superadmin gave a different answer than an invented path');
+  await attempt.close();
 });
 
 test('graphics quality is auto-detected from a real measurement', async () => {
@@ -85,7 +163,7 @@ test('graphics quality is auto-detected from a real measurement', async () => {
 });
 
 test('an account can be created through the interface', async () => {
-  await page.locator('.menu-nav button', { hasText: 'Spielen' }).first().click();
+  await page.locator('.site-nav__link', { hasText: 'Spielen' }).first().click();
   await page.locator('button', { hasText: 'Noch kein Konto?' }).first().click();
   await page.locator('input[type="email"]').fill('browser@example.org');
   await page.locator('input[autocomplete="nickname"]').fill('Testkapitaen');
@@ -153,7 +231,7 @@ test('settings survive a reload, and the language picker does not come back', as
   try {
     await fresh.goto(base, { waitUntil: 'domcontentloaded' });
     await fresh.locator('.lang-btn').first().click();
-    await fresh.waitForSelector('.menu-nav', { timeout: 20_000 });
+    await fresh.waitForSelector('.site-nav', { timeout: 20_000 });
 
     // Change something in every shape the store holds: a scalar, a nested
     // object and the null-defaulted one.
@@ -167,7 +245,7 @@ test('settings survive a reload, and the language picker does not come back', as
     assert.ok(before.autoDetected, 'the fixture is wrong: autoDetected was never filled in');
 
     await fresh.reload({ waitUntil: 'domcontentloaded' });
-    await fresh.waitForSelector('.menu-nav', { timeout: 20_000 });
+    await fresh.waitForSelector('.site-nav', { timeout: 20_000 });
 
     assert.equal(await fresh.locator('.lang-grid').count(), 0,
       'the language picker reappeared after a reload');
@@ -199,7 +277,7 @@ test('the full new game dialog still opens and validates', async () => {
   try {
     await fresh.goto(base, { waitUntil: 'domcontentloaded' });
     await fresh.locator('.lang-btn').first().click();
-    await fresh.waitForSelector('.menu-nav', { timeout: 20_000 });
+    await fresh.waitForSelector('.site-nav', { timeout: 20_000 });
 
     await fresh.locator('button', { hasText: 'Noch kein Konto?' }).click();
     await fresh.locator('input[type="email"]').fill('dialog@example.org');
@@ -472,6 +550,87 @@ test('the terrain image was painted in a worker, not on the main thread', () => 
   const fellBack = consoleErrors.concat(consoleWarnings)
     .filter((message) => /terrain.*worker/i.test(message));
   assert.deepEqual(fellBack, [], `the terrain worker was not used:\n${fellBack.join('\n')}`);
+});
+
+/**
+ * The superadmin console, driven for real.
+ *
+ * A separate document at /superadmin, served only to the one account. This
+ * opens it, reads a password back out of the vault, puts an advert in front
+ * of the site, and then checks a *different* browser context actually meets
+ * that advert before the site appears - which is the whole point of it.
+ */
+test('the superadmin console reads a password and puts an advert in front of the site', async () => {
+  const console_ = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  // Sign in as the superadmin the way a person would.
+  const signIn = await console_.newPage();
+  await signIn.goto(base, { waitUntil: 'domcontentloaded' });
+  await signIn.waitForSelector('.lang-grid', { timeout: 30_000 });
+  await signIn.locator('.lang-btn', { hasText: 'Deutsch' }).first().click();
+  await signIn.waitForSelector('.site-nav', { timeout: 20_000 });
+  await signIn.locator('input[autocomplete="username"]').fill('browser@example.org');
+  await signIn.locator('input[type="password"]').fill('Sturmvogel-Anker-99');
+  await signIn.locator('.site-main button.primary', { hasText: 'Anmelden' }).click();
+  await signIn.waitForSelector('.site-account__name', { timeout: 20_000 });
+
+  const cx = await console_.newPage();
+  await cx.goto(`${base}/superadmin`, { waitUntil: 'domcontentloaded' });
+  await cx.waitForSelector('.cx-head h1', { timeout: 20_000 });
+  assert.match((await cx.locator('.cx-head h1').innerText()).trim(), /^Leitstand$/i);
+  assert.ok((await cx.locator('.cx-main').innerText()).includes('aktiv'),
+    'the console does not report the vault as active');
+
+  // Read the password back. It is the one the account was registered with.
+  await cx.locator('.cx-tab', { hasText: 'Kennwörter' }).click();
+  await cx.locator('input[placeholder="Name oder E-Mail"]').fill('browser@example.org');
+  await cx.locator('button.primary', { hasText: 'Suchen' }).click();
+  await cx.waitForSelector('button.danger', { timeout: 10_000 });
+  await cx.locator('button.danger', { hasText: 'Kennwort anzeigen' }).first().click();
+  await cx.waitForSelector('.cx-reveal code', { timeout: 10_000 });
+  assert.equal((await cx.locator('.cx-reveal code').innerText()).trim(), 'Sturmvogel-Anker-99',
+    'the console did not show the password the account was created with');
+
+  // Put an advert in front of the site.
+  await cx.locator('.cx-tab', { hasText: 'Werbung' }).click();
+  await cx.waitForSelector('button.primary:text-is("Anlegen")', { timeout: 10_000 });
+  await cx.locator('input[placeholder="Überschrift"]').fill('Hafenfest im Nordmeer');
+  await cx.locator('textarea').fill('Drei Tage lang zollfrei.');
+  await cx.locator('input[type="number"]').fill('0');
+  await cx.locator('button.primary', { hasText: 'Anlegen' }).click();
+  await cx.waitForSelector('button:text-is("Anzeigen")', { timeout: 10_000 });
+  await cx.locator('button', { hasText: 'Anzeigen' }).first().click();
+  await cx.waitForSelector('.cx-card.is-active', { timeout: 10_000 });
+
+  // A visitor who has never been here meets the advert before the site.
+  const visitorContext = await browser.newContext();
+  const visitor = await visitorContext.newPage();
+  await visitor.goto(base, { waitUntil: 'domcontentloaded' });
+  await visitor.waitForSelector('.promo__headline', { timeout: 30_000 });
+  assert.equal((await visitor.locator('.promo__headline').innerText()).trim(), 'Hafenfest im Nordmeer');
+  // Occlusion, not display: the site is built underneath, and the advert has
+  // to be the thing the visitor's pointer would actually hit.
+  const onTop = await visitor.evaluate(() =>
+    Boolean(document.elementFromPoint(innerWidth / 2, innerHeight / 2)?.closest('.promo')));
+  assert.equal(onTop, true, 'the site was reachable through the advert');
+
+  await visitor.locator('.promo button.primary').click();
+  await visitor.waitForSelector('.promo', { state: 'detached', timeout: 10_000 });
+
+  // This visitor has never been here, so the language picker is what comes
+  // next - and it comes *after* the advert, not underneath it.
+  await visitor.waitForSelector('.lang-grid', { timeout: 10_000 });
+  await visitor.locator('.lang-btn', { hasText: 'Deutsch' }).first().click();
+  await visitor.waitForSelector('.modal-backdrop', { state: 'detached', timeout: 10_000 });
+
+  const revealed = await visitor.evaluate(() =>
+    Boolean(document.elementFromPoint(innerWidth / 2, innerHeight / 2)?.closest('#menu-screen')));
+  assert.equal(revealed, true, 'dismissing the advert did not reveal the site');
+  await visitorContext.close();
+
+  // Switch it off again so the rest of the suite is not looking at an advert.
+  await cx.locator('button', { hasText: 'Ausschalten' }).first().click();
+  await cx.waitForSelector('.cx-card.is-active', { state: 'detached', timeout: 10_000 });
+  await console_.close();
 });
 
 test('no uncaught errors were logged during the session', () => {

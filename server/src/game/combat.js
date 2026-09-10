@@ -23,7 +23,6 @@ import { regionAt } from '@schiffi/shared/world/regions.js';
 import { goodById } from '@schiffi/shared/data/goods.js';
 import { addCargo, cargoUsage } from './characters.js';
 import { awardXp } from './progression.js';
-import { audit } from '../services/audit.js';
 import {
   GUN_RANGE, BOARDING_RANGE, SALVAGE_RANGE, RELOAD_MS, BOARDABLE_HULL,
   CANNON_PRICE, SHOT_PRICE, MIN_BOUNTY,
@@ -208,8 +207,6 @@ async function sinkTarget({ instance, attacker, target, gateway, userId }) {
 
   const bounty = await claimBounty(db, instance, attacker, target);
 
-  await audit({ userId }, 'combat.sunk', 'character', String(attacker.characterId),
-    { target: target.displayName, isPlayer, wreckId, bounty });
 
   gateway?.broadcastToWorld(instance, {
     t: 'event', kind: 'shipSunk',
@@ -368,8 +365,6 @@ export async function board({ instance, characterId, userId, payload, gateway })
     await tx.run('UPDATE crew_members SET morale = LEAST(100, morale + 8) WHERE ship_id = ?', [ship.id]);
 
     if (target.send) target.send({ t: 'event', kind: 'boarded', by: attacker.displayName, taken });
-    await audit({ userId }, 'combat.board', 'character', String(characterId),
-      { target: target.displayName, taken: taken.length }, { db: tx });
 
     return { boarded: true, taken, targetId: target.netId };
   });

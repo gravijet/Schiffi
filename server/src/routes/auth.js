@@ -11,7 +11,6 @@ import { negotiateLocale } from '@schiffi/shared/i18n/index.js';
 import { permissionsFor } from '../services/rbac.js';
 import config from '../config.js';
 import { storeAvatar, readAvatar, removeAvatar } from '../services/avatars.js';
-import { audit } from '../services/audit.js';
 
 const SESSION_COOKIE = 'sid';
 
@@ -63,10 +62,18 @@ export function registerAuthRoutes(router) {
    * 401: this is the "am I signed in?" probe every page load makes, and a 401
    * would fill the browser console with errors for an expected state.
    */
+  /**
+   * The signed-in account, its roles and what it may do.
+   *
+   * `superadmin` is only ever true in the superadmin's own response - nobody
+   * else's session can observe the field being set for anybody. The client
+   * uses it to decide whether /superadmin is worth offering; the server checks
+   * again on every request that matters.
+   */
   router.get('/api/auth/me', async (ctx) => {
-    if (!ctx.user) return { user: null, roles: [], permissions: [] };
-    const { permissions, roles } = await permissionsFor(ctx.user.id);
-    return { user: ctx.user, roles, permissions: [...permissions] };
+    if (!ctx.user) return { user: null, roles: [], permissions: [], superadmin: false };
+    const { permissions, roles, superadmin } = await permissionsFor(ctx.user.id);
+    return { user: ctx.user, roles, permissions: [...permissions], superadmin };
   }, { auth: false });
 
   router.patch('/api/auth/me', async (ctx) => {
@@ -82,14 +89,11 @@ export function registerAuthRoutes(router) {
   router.post('/api/auth/avatar', async (ctx) => {
     const buffer = await ctx.rawBody();
     const stored = await storeAvatar(ctx.user.id, buffer);
-    await audit(ctx.actor, 'account.avatar_set', 'user', String(ctx.user.id),
-      { bytes: stored.bytes });
     return { avatar: `/api/users/${ctx.user.id}/avatar?v=${stored.path.split('-')[1]}` };
   });
 
   router.delete('/api/auth/avatar', async (ctx) => {
     await removeAvatar(ctx.user.id);
-    await audit(ctx.actor, 'account.avatar_cleared', 'user', String(ctx.user.id));
     return { ok: true };
   });
 

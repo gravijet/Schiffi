@@ -8,7 +8,6 @@
  */
 import { getDatabase } from '../db/index.js';
 import { HttpError } from '../http/respond.js';
-import { audit } from '../services/audit.js';
 
 /**
  * Codes are compared case-insensitively with collapsed whitespace, so
@@ -84,8 +83,6 @@ export async function redeemCode({ instance, characterId, userId, code }) {
       amount: coins, at: Date.now(),
     });
 
-    await audit({ userId: character.user_id }, 'code.redeem', 'character', String(characterId),
-      { code: entry.code, coins }, { db: tx });
 
     return {
       code: entry.code,

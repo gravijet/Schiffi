@@ -5,11 +5,9 @@
  * control here calls a permission-gated endpoint - the UI hiding a button is
  * a convenience, not the security boundary.
  *
- * The security tab can display a stored password, because this installation is
- * operated that way (see server/src/services/passwordVault.js). The control is
- * gated on `users.password_reveal`, every use is written to the audit log, and
- * the panel states plainly when a password cannot be shown - a password set
- * before the vault key existed is gone for good, Argon2id being one-way.
+ * The permission list this file works from is the whole of what the server
+ * offers an administrator. There is nothing above it to hint at: no wildcard,
+ * no hidden tab, no greyed-out control an administrator could wonder about.
  */
 import { h, add, clear, toast, modal, confirmDialog, tabs, debounce } from './dom.js';
 import { t, td } from '../state/i18n.js';
@@ -18,7 +16,7 @@ import { supportTab, newsTab, adsTab } from './adminContent.js';
 
 export function adminView(session) {
   const permissions = new Set(session?.permissions ?? []);
-  const can = (permission) => permissions.has('*') || permissions.has(permission);
+  const can = (permission) => permissions.has(permission);
 
   const root = h('div');
   let active = can('users.view') ? 'users' : can('roles.view') ? 'roles' : 'system';
@@ -28,7 +26,6 @@ export function adminView(session) {
     const available = [
       can('users.view') && { key: 'users', label: t('admin.users') },
       can('roles.view') && { key: 'roles', label: t('admin.roles') },
-      can('audit.view') && { key: 'audit', label: t('admin.auditLog') },
       can('support.view') && { key: 'support', label: t('support.title') },
       can('news.view') && { key: 'news', label: t('news.title') },
       can('ads.view') && { key: 'ads', label: t('ads.title') },
@@ -43,12 +40,11 @@ export function adminView(session) {
       h('div', { style: { paddingTop: '12px' } },
         active === 'users' ? usersTab(can)
           : active === 'roles' ? rolesTab(can)
-            : active === 'audit' ? auditTab()
-              : active === 'support' ? supportTab(can)
-                : active === 'news' ? newsTab(can)
-                  : active === 'ads' ? adsTab(can)
-                    : active === 'integrations' ? integrationsTab()
-                      : systemTab()),
+            : active === 'support' ? supportTab(can)
+              : active === 'news' ? newsTab(can)
+                : active === 'ads' ? adsTab(can)
+                  : active === 'integrations' ? integrationsTab()
+                    : systemTab()),
     );
   };
   render();
@@ -98,57 +94,6 @@ function usersTab(can) {
   return root;
 }
 
-/**
- * "Show password".
- *
- * Deliberately a two-step control: the value is never rendered as a side
- * effect of opening a user, only after a conscious click, and it hides itself
- * again on close. The server audits the call regardless of what happens here -
- * hiding it in the interface is a courtesy to whoever is standing behind the
- * operator, not a security boundary.
- */
-function revealControl(userId, status) {
-  const output = h('div');
-  const wrap = h('div', { style: { marginTop: '10px' } });
-
-  const button = h('button.danger', {
-    onClick: async () => {
-      button.disabled = true;
-      try {
-        const result = await api.adminRevealPassword(userId);
-        clear(output);
-        if (result.password === null) {
-          // Say which of the four reasons applies instead of "failed".
-          output.append(h('p.bad.small', null, t(`admin.reveal.${result.reason}`)));
-          button.disabled = false;
-          return;
-        }
-        output.append(
-          h('div.reveal', null,
-            h('code.reveal__value', null, result.password),
-            h('button.ghost.small', {
-              onClick: () => navigator.clipboard?.writeText(result.password)
-                .then(() => toast(t('common.copied'), 'good'))
-                .catch(() => toast(t('error.generic'), 'bad')),
-            }, t('common.copy')),
-            h('button.ghost.small', {
-              onClick: () => { clear(output); button.disabled = false; },
-            }, t('common.hide'))),
-          h('p.small.muted', null, t('admin.reveal.audited')));
-      } catch (error) {
-        toast(t(error.code ?? 'error.generic'), 'bad');
-        button.disabled = false;
-      }
-    },
-  }, t('admin.reveal.button'));
-
-  add(wrap,
-    status.passwordReadable ? button : h('p.small.muted', null,
-      t(status.passwordVaultEnabled ? 'admin.reveal.notStored' : 'admin.reveal.vaultDisabled')),
-    output);
-  return wrap;
-}
-
 async function userDialog(userId, can) {
   const [detail, roles] = await Promise.all([api.adminUser(userId), api.adminRoles().catch(() => ({ roles: [] }))]);
   const body = h('div.stack');
@@ -161,14 +106,9 @@ async function userDialog(userId, can) {
         h('div.card__title', null, t('admin.securityStatus')),
         h('dl.kv', null,
           h('dt', null, t('admin.passwordAlgorithm')), h('dd.mono', null, status.passwordAlgorithm),
-          h('dt', null, t('admin.passwordReadable')),
-          h(`dd.${status.passwordReadable ? 'warn' : 'muted'}`, null,
-            t(status.passwordReadable ? 'common.yes' : 'common.no')),
           h('dt', null, t('auth.sessions')), h('dd', null, String(status.activeSessions)),
           h('dt', null, t('admin.failedLogins24h')), h('dd', null, String(status.failedLogins24h)),
-          h('dt', null, t('auth.verifyEmail')), h('dd', null, status.emailVerified ? '✓' : '✗')),
-        can('users.password_reveal') ? revealControl(userId, status) : null,
-      );
+          h('dt', null, t('auth.verifyEmail')), h('dd', null, status.emailVerified ? '✓' : '✗')));
     }).catch(() => { clear(security); security.append(h('p.bad', null, t('error.forbidden'))); });
   }
 
@@ -387,26 +327,7 @@ function duplicateDialog(role, onDone) {
   });
 }
 
-// --- audit, system, integrations -------------------------------------------
-
-function auditTab() {
-  const root = h('div');
-  api.adminAudit('?limit=150').then(({ entries }) => {
-    clear(root);
-    root.append(h('table', null,
-      h('thead', null, h('tr', null,
-        h('th', null, t('hud.time')), h('th', null, 'Action'),
-        h('th', null, 'Actor'), h('th', null, 'Target'), h('th', null, 'Data'))),
-      h('tbody', null, ...entries.map((entry) =>
-        h('tr', null,
-          h('td.small.mono', null, td(Number(entry.at))),
-          h('td.small', null, entry.action),
-          h('td.small.mono', null, String(entry.actor_user_id ?? '—')),
-          h('td.small', null, `${entry.target_type ?? ''} ${entry.target_id ?? ''}`),
-          h('td.small.muted.mono', null, JSON.stringify(entry.data).slice(0, 60)))))));
-  }).catch(() => root.append(h('p.bad', null, t('error.forbidden'))));
-  return h('div', null, h('p.muted', null, t('common.loading')), root);
-}
+// --- system and integrations -----------------------------------------------
 
 function systemTab() {
   const root = h('div');

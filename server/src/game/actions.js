@@ -19,7 +19,6 @@ import { CELL_SIZE } from '@schiffi/shared/world/constants.js';
 import { applyTrade, marketFor, reputationMap, derivePrice, seasonMultiplier } from './economy.js';
 import { addCargo, removeCargo, cargoUsage, describeShip, describeCrew } from './characters.js';
 import { redeemCode } from './codes.js';
-import { audit } from '../services/audit.js';
 
 /** How close a ship must be to a port to dock, in world units. */
 const DOCK_RANGE = CELL_SIZE * 3.5;
@@ -212,8 +211,6 @@ export async function sell({ instance, characterId, userId, payload }) {
       if (Math.random() < chance) {
         seized = true;
         await adjustReputation(tx, characterId, port.factionKey, -8);
-        await audit({ userId }, 'trade.contraband_seized', 'character', String(characterId),
-          { port: port.id, good: good.key, qty }, { db: tx });
         return {
           goodId: good.id, qty, seized: true, total: 0,
           coins: Number(character.coins),
@@ -301,8 +298,6 @@ export async function buyShip({ instance, characterId, userId, payload }) {
       hull: cls.hull, sail: cls.sail, upgrades: '{}',
       cannons: 0, ammunition: 0, stored_at_port: port.id, created_at: Date.now(),
     });
-    await audit({ userId }, 'ship.buy', 'character', String(characterId),
-      { classKey: cls.key, price: cls.price }, { db: tx });
     return { shipId, classKey: cls.key, price: cls.price, coins: Number(character.coins) - cls.price };
   });
 }

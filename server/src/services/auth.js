@@ -19,8 +19,7 @@ import { hash as argonHash, verify as argonVerify } from '@node-rs/argon2';
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { getDatabase } from '../db/index.js';
 import config from '../config.js';
-import { audit } from './audit.js';
-import { invalidateUser, ownerCount, grantOwner } from './rbac.js';
+import { invalidateUser } from './rbac.js';
 import { sendMail } from '../mail/transport.js';
 import { verifyEmailTemplate, passwordResetTemplate, passwordChangedTemplate } from '../mail/templates.js';
 import { isValidLocale, DEFAULT_LOCALE } from '@schiffi/shared/i18n/index.js';
@@ -171,12 +170,10 @@ export async function register({ email, username, password, locale, ip }) {
     settings: '{}', created_at: now, updated_at: now,
   });
 
-  // The very first account becomes the owner; after that the role is granted
-  // only through the admin UI by someone who already holds roles.assign.
-  if ((await ownerCount()) === 0) {
-    await grantOwner(userId);
-    await audit({ userId, ip }, 'user.bootstrap_owner', 'user', String(userId), {});
-  }
+  // Nobody is promoted by registering. There is no owner role to fall into
+  // any more, and the single superadmin is an e-mail address in the server's
+  // configuration - registering with it is what makes an account superadmin,
+  // and nothing an account does at runtime can change that.
 
   const token = await issueEmailToken(userId, 'verify');
   const delivery = await sendMail({
@@ -184,7 +181,6 @@ export async function register({ email, username, password, locale, ip }) {
     ...verifyEmailTemplate({ locale: chosenLocale, name: String(username).trim(), token }),
   });
 
-  await audit({ userId, ip }, 'user.register', 'user', String(userId), { username, delivery: delivery.delivered });
   return { userId, verification: delivery };
 }
 
@@ -225,7 +221,6 @@ export async function login({ identifier, password, ip, userAgent }) {
 
   const session = await createSession(user.id, ip, userAgent);
   await db.run('UPDATE users SET last_login_at = ? WHERE id = ?', [Date.now(), user.id]);
-  await audit({ userId: user.id, ip }, 'user.login', 'user', String(user.id), {});
 
   return { token: session.token, user: publicUser(user), mustResetPassword: user.force_password_reset === 1 };
 }
@@ -287,7 +282,6 @@ export async function revokeSession(userId, sessionId, actor) {
   const db = getDatabase();
   await db.run('UPDATE sessions SET revoked_at = ? WHERE id = ? AND user_id = ?',
     [Date.now(), sessionId, userId]);
-  await audit(actor, 'session.revoke', 'user', String(userId), { sessionId });
 }
 
 export async function revokeAllSessions(userId, actor, exceptSessionId = null) {
@@ -296,7 +290,6 @@ export async function revokeAllSessions(userId, actor, exceptSessionId = null) {
   let sql = 'UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL';
   if (exceptSessionId) { sql += ' AND id <> ?'; params.push(exceptSessionId); }
   const { changes } = await db.run(sql, params);
-  await audit(actor, 'session.revoke_all', 'user', String(userId), { count: changes });
   return changes;
 }
 
@@ -332,7 +325,6 @@ export async function verifyEmail(token) {
   if (!userId) throw fail(400, 'error.validation', 'invalid or expired token');
   await db.run('UPDATE users SET email_verified_at = ?, updated_at = ? WHERE id = ?',
     [Date.now(), Date.now(), userId]);
-  await audit({ userId }, 'user.email_verified', 'user', String(userId), {});
   return true;
 }
 
@@ -354,7 +346,6 @@ export async function requestPasswordReset({ email, ip }) {
   const user = await db.get('SELECT * FROM users WHERE email_norm = ? AND deleted_at IS NULL',
     [normEmail(email)]);
   if (!user) {
-    await audit({ ip }, 'user.reset_requested_unknown', 'email', normEmail(email), {});
     return { sent: false };
   }
   const token = await issueEmailToken(user.id, 'reset');
@@ -362,7 +353,6 @@ export async function requestPasswordReset({ email, ip }) {
     to: user.email,
     ...passwordResetTemplate({ locale: user.locale, name: user.username, token, hours: 2 }),
   });
-  await audit({ userId: user.id, ip }, 'user.reset_requested', 'user', String(user.id), {});
   return { sent: true, delivery };
 }
 
@@ -377,7 +367,6 @@ export async function triggerPasswordReset(userId, actor) {
     ...passwordResetTemplate({ locale: user.locale, name: user.username, token, hours: 2, byAdmin: true }),
   });
   await db.run('UPDATE users SET force_password_reset = 1 WHERE id = ?', [userId]);
-  await audit(actor, 'user.reset_triggered', 'user', String(userId), { delivery: delivery.delivered });
   return { delivery };
 }
 
@@ -398,7 +387,6 @@ export async function resetPassword({ token, newPassword, ip }) {
       vaultEnabled() ? Date.now() : null, vaultKeyId(), Date.now(), userId]);
   await revokeAllSessions(userId, { userId, ip });
   await sendMail({ to: user.email, ...passwordChangedTemplate({ locale: user.locale, name: user.username }) });
-  await audit({ userId, ip }, 'user.password_reset', 'user', String(userId), {});
   return true;
 }
 
@@ -419,7 +407,6 @@ export async function changePassword({ userId, currentPassword, newPassword, ip,
       vaultEnabled() ? Date.now() : null, vaultKeyId(), Date.now(), userId]);
   await revokeAllSessions(userId, { userId, ip }, keepSessionId);
   await sendMail({ to: user.email, ...passwordChangedTemplate({ locale: user.locale, name: user.username }) });
-  await audit({ userId, ip }, 'user.password_changed', 'user', String(userId), {});
   return true;
 }
 
@@ -471,7 +458,6 @@ export async function updateProfile(userId, changes, actor) {
   fields.updated_at = Date.now();
   const sets = Object.keys(fields).map((k) => `${k} = ?`).join(', ');
   await db.run(`UPDATE users SET ${sets} WHERE id = ?`, [...Object.values(fields), userId]);
-  await audit(actor ?? { userId }, 'user.profile_update', 'user', String(userId), Object.keys(fields));
   invalidateUser(userId);
   return true;
 }
@@ -481,19 +467,22 @@ export async function banUser(userId, { until, reason }, actor) {
   await db.run('UPDATE users SET banned_until = ?, ban_reason = ?, updated_at = ? WHERE id = ?',
     [until, reason ?? '', Date.now(), userId]);
   await revokeAllSessions(userId, actor);
-  await audit(actor, 'user.ban', 'user', String(userId), { until, reason });
 }
 
 export async function unbanUser(userId, actor) {
   const db = getDatabase();
   await db.run('UPDATE users SET banned_until = NULL, ban_reason = NULL, updated_at = ? WHERE id = ?',
     [Date.now(), userId]);
-  await audit(actor, 'user.unban', 'user', String(userId), {});
 }
 
 /**
- * Security status for support staff. Deliberately contains no password
- * material - not the hash, not its length, not a hint.
+ * Security status for support staff.
+ *
+ * Deliberately contains no password material - not the hash, not its length,
+ * not a hint - and, just as deliberately, no sign that a recoverable copy
+ * exists at all. An administrator reading this must not be able to infer that
+ * somebody else can read a password; the vault's status is reported only by
+ * routes/superadmin.js, to the one account that may use it.
  */
 export async function securityStatus(userId) {
   const db = getDatabase();
@@ -510,14 +499,6 @@ export async function securityStatus(userId) {
     username: user.username,
     emailVerified: Boolean(user.email_verified_at),
     passwordAlgorithm: user.password_algo,
-    // This build keeps a recoverable copy (services/passwordVault.js), so the
-    // field reports what is actually true for THIS account rather than a
-    // blanket promise. A password set before the vault key was configured is
-    // still unreadable, because Argon2id cannot be reversed.
-    passwordReadable: Boolean(user.password_vault) && vaultEnabled()
-      && user.password_vault_key_id === vaultKeyId(),
-    passwordVaultEnabled: vaultEnabled(),
-    passwordVaultAt: user.password_vault_at ? Number(user.password_vault_at) : null,
     forcePasswordReset: user.force_password_reset === 1,
     activeSessions: Number(sessions?.n ?? 0),
     failedLogins24h: Number(failures?.n ?? 0),
@@ -580,7 +561,6 @@ export async function deleteAccount(userId, { password, actor }) {
     await tx.run('UPDATE sessions SET revoked_at = ? WHERE user_id = ?', [Date.now(), userId]);
     await tx.run('DELETE FROM email_tokens WHERE user_id = ?', [userId]);
   });
-  await audit(actor ?? { userId }, 'user.delete', 'user', String(userId), {});
   invalidateUser(userId);
   return true;
 }

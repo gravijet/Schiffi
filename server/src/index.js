@@ -17,6 +17,7 @@ import { Simulation } from './game/simulation.js';
 import { ensureDefaultWorld, loadedWorlds, loadWorld } from './game/worldManager.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerAdminRoutes } from './routes/admin.js';
+import { registerSuperadminRoutes } from './routes/superadmin.js';
 import { registerGameRoutes } from './routes/game.js';
 import { registerSystemRoutes } from './routes/system.js';
 import { registerGameplayRoutes, reloadEvents } from './routes/gameplay.js';
@@ -40,6 +41,7 @@ export async function bootstrap({ listen = true } = {}) {
 
   registerAuthRoutes(http.router);
   registerAdminRoutes(http.router);
+  registerSuperadminRoutes(http.router, { staticRoot });
   registerGameRoutes(http.router, { simulations });
   registerSystemRoutes(http.router, { gateway, simulations });
   registerGameplayRoutes(http.router, { gateway });

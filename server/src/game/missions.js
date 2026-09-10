@@ -15,7 +15,6 @@ import { generatePersonName } from '@schiffi/shared/world/names.js';
 import { isContraband } from '@schiffi/shared/data/factions.js';
 import { removeCargo, addCargo, cargoUsage } from './characters.js';
 import { awardXp } from './progression.js';
-import { audit } from '../services/audit.js';
 import { MAX_ACTIVE_CONTRACTS } from '@schiffi/shared/data/costs.js';
 
 export const MISSION_TYPES = ['delivery', 'passenger', 'bounty', 'exploration',
@@ -366,8 +365,6 @@ export async function complete({ instance, characterId, userId, payload }) {
 
     const xp = Math.round(40 + reward / 25);
     await awardXp(tx, characterId, xp);
-    await audit({ userId }, 'mission.complete', 'character', String(characterId),
-      { missionId: mission.id, type: mission.type, reward }, { db: tx });
 
     return { missionId: mission.id, type: mission.type, reward, xp, detail: proof.detail ?? null };
   });

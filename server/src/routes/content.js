@@ -9,13 +9,15 @@
  */
 import { getDatabase } from '../db/index.js';
 import { badRequest, notFound, forbidden } from '../http/respond.js';
-import { audit } from '../services/audit.js';
 import { can } from '../services/rbac.js';
+import { storeMedia, readMedia, removeMedia } from '../services/media.js';
+import { activeInterstitial, countImpression, countClick } from '../services/interstitial.js';
 import { LOCALES, isValidLocale, negotiateLocale } from '@schiffi/shared/i18n/index.js';
 
 const TICKET_CATEGORIES = ['general', 'account', 'payment', 'bug', 'report', 'other'];
 const TICKET_PRIORITIES = ['low', 'normal', 'high'];
 const MAX_OPEN_TICKETS = 5;
+const MAX_PENDING_ADS = 10;
 
 const trim = (value, max) => String(value ?? '').trim().slice(0, max);
 
@@ -82,8 +84,6 @@ export function registerContentRoutes(router) {
       await tx.insert('support_messages', {
         ticket_id: ticketId, user_id: ctx.user.id, body: message, is_staff: 0, at: now,
       });
-      await audit(ctx.actor, 'support.ticket_created', 'ticket', String(ticketId),
-        { subject }, { db: tx });
       return { id: ticketId, status: 'open', createdAt: now };
     });
   });
@@ -134,7 +134,6 @@ export function registerContentRoutes(router) {
 
     await db.run("UPDATE support_tickets SET status = 'closed', updated_at = ? WHERE id = ?",
       [Date.now(), row.id]);
-    await audit(ctx.actor, 'support.ticket_closed', 'ticket', String(row.id));
     return { ok: true };
   });
 
@@ -176,7 +175,6 @@ export function registerContentRoutes(router) {
     const columns = Object.keys(patch);
     await db.run(`UPDATE support_tickets SET ${columns.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`,
       [...columns.map((c) => patch[c]), row.id]);
-    await audit(ctx.actor, 'support.ticket_updated', 'ticket', String(row.id), patch);
     return { ok: true };
   }, { permission: 'support.reply' });
 
@@ -230,7 +228,6 @@ export function registerContentRoutes(router) {
       published_at: body.publish ? now : null,
       created_at: now, updated_at: now,
     });
-    await audit(ctx.actor, 'news.created', 'news', String(id), { slug });
     return { id, slug };
   }, { permission: 'news.publish' });
 
@@ -251,18 +248,21 @@ export function registerContentRoutes(router) {
     const columns = Object.keys(patch);
     await db.run(`UPDATE news_posts SET ${columns.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`,
       [...columns.map((c) => patch[c]), row.id]);
-    await audit(ctx.actor, 'news.updated', 'news', String(row.id), { publish: body.publish });
     return { ok: true };
   }, { permission: 'news.publish' });
 
   router.delete('/api/admin/news/:id', async (ctx) => {
     const db = getDatabase();
     await db.run('DELETE FROM news_posts WHERE id = ?', [ctx.params.id]);
-    await audit(ctx.actor, 'news.deleted', 'news', String(ctx.params.id));
     return { ok: true };
   }, { permission: 'news.publish' });
 
   // --- adverts ------------------------------------------------------------
+  //
+  // Submitting one needs the ads.submit permission, which the "Werbekunde"
+  // role carries and nothing else does. That is the whole point of the role:
+  // an ordinary player cannot upload advertising, and an account that can
+  // upload advertising gains no administrative reach by doing so.
 
   router.post('/api/ads', async (ctx) => {
     const body = await ctx.body();
@@ -274,17 +274,68 @@ export function registerContentRoutes(router) {
     if (!/^https:\/\/[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(target)) throw badRequest();
 
     const db = getDatabase();
+    const open = await db.get(
+      "SELECT COUNT(*) AS n FROM ads WHERE user_id = ? AND status = 'pending'", [ctx.user.id]);
+    if (Number(open?.n ?? 0) >= MAX_PENDING_ADS) throw badRequest('error.rateLimited');
+
     const id = await db.insert('ads', {
       user_id: ctx.user.id, title, body: text, target_url: target,
+      placement: body.placement === 'sidebar' ? 'sidebar' : 'menu',
       status: 'pending', submitted_at: Date.now(),
     });
-    await audit(ctx.actor, 'ads.submitted', 'ad', String(id), { title });
     return { id, status: 'pending' };
-  });
+  }, { permission: 'ads.submit' });
 
-  router.get('/api/ads', async () => {
+  /**
+   * The advert's picture, uploaded as raw bytes after the advert exists.
+   *
+   * Changing the image sends the advert back for review: approving a banner
+   * and then having the picture swapped underneath is exactly the hole an
+   * approval step is supposed to close.
+   */
+  router.post('/api/ads/:id/image', async (ctx) => {
     const db = getDatabase();
-    const rows = await db.all("SELECT id, title, body, target_url FROM ads WHERE status = 'approved'");
+    const row = await db.get('SELECT * FROM ads WHERE id = ? AND user_id = ?',
+      [ctx.params.id, ctx.user.id]);
+    if (!row) throw notFound();
+
+    const stored = await storeMedia(await ctx.rawBody());
+    await db.run("UPDATE ads SET image_path = ?, status = 'pending' WHERE id = ?", [stored.path, row.id]);
+
+    if (row.image_path && row.image_path !== stored.path) {
+      const stillUsed = await db.get('SELECT 1 AS x FROM ads WHERE image_path = ? LIMIT 1', [row.image_path]);
+      if (!stillUsed) await removeMedia(row.image_path);
+    }
+    return { image: `/media/ads/${stored.path}`, status: 'pending' };
+  }, { permission: 'ads.submit' });
+
+  /** An advertiser's own adverts, with the figures they earned. */
+  router.get('/api/ads/mine', async (ctx) => {
+    const db = getDatabase();
+    const rows = await db.all(
+      'SELECT * FROM ads WHERE user_id = ? ORDER BY submitted_at DESC LIMIT 100', [ctx.user.id]);
+    return { ads: rows.map(publicAd) };
+  }, { permission: 'ads.submit' });
+
+  router.delete('/api/ads/:id', async (ctx) => {
+    const db = getDatabase();
+    const row = await db.get('SELECT * FROM ads WHERE id = ? AND user_id = ?',
+      [ctx.params.id, ctx.user.id]);
+    if (!row) throw notFound();
+    await db.run('DELETE FROM ads WHERE id = ?', [row.id]);
+    if (row.image_path) {
+      const stillUsed = await db.get('SELECT 1 AS x FROM ads WHERE image_path = ? LIMIT 1', [row.image_path]);
+      if (!stillUsed) await removeMedia(row.image_path);
+    }
+    return { ok: true };
+  }, { permission: 'ads.submit' });
+
+  router.get('/api/ads', async (ctx) => {
+    const db = getDatabase();
+    const placement = ctx.query.placement === 'sidebar' ? 'sidebar' : 'menu';
+    const rows = await db.all(
+      "SELECT id, title, body, target_url, image_path FROM ads WHERE status = 'approved' AND placement = ? LIMIT 8",
+      [placement]);
     // Impressions are counted for what is actually handed out.
     if (rows.length) {
       await db.run(
@@ -294,6 +345,7 @@ export function registerContentRoutes(router) {
     return {
       ads: rows.map((row) => ({
         id: row.id, title: row.title, body: row.body, targetUrl: row.target_url,
+        image: row.image_path ? `/media/ads/${row.image_path}` : null,
       })),
     };
   }, { auth: false });
@@ -306,20 +358,60 @@ export function registerContentRoutes(router) {
     return { ok: true };
   }, { auth: false });
 
+  /**
+   * Advert and interstitial images.
+   *
+   * The name is the file's own content hash, so this may be cached forever -
+   * a replaced picture is a different URL, never a stale one.
+   */
+  router.get('/media/ads/:name', async (ctx) => {
+    const media = await readMedia(ctx.params.name);
+    if (!media) throw notFound();
+    ctx.res.writeHead(200, {
+      'Content-Type': media.type,
+      'Content-Length': media.data.length,
+      'Cache-Control': 'public, max-age=31536000, immutable',
+    });
+    ctx.res.end(media.data);
+    return undefined;
+  }, { auth: false });
+
+  // --- the advert in front of the site ------------------------------------
+
+  /**
+   * Asked for by every visitor before anything else is painted, so it answers
+   * from a short-lived cache and returns null rather than 404 when there is
+   * nothing to show - a missing advert is the normal case, not an error.
+   */
+  router.get('/api/interstitial', async () => {
+    const current = await activeInterstitial();
+    if (!current) return { interstitial: null };
+    countImpression(current.id).catch(() => {});
+    return {
+      interstitial: {
+        id: current.id,
+        headline: current.headline,
+        body: current.body,
+        image: current.image,
+        targetUrl: current.targetUrl,
+        seconds: current.seconds,
+      },
+    };
+  }, { auth: false });
+
+  router.post('/api/interstitial/:id/click', async (ctx) => {
+    const counted = await countClick(ctx.params.id);
+    if (!counted) throw notFound();
+    return { ok: true };
+  }, { auth: false });
+
   router.get('/api/admin/ads', async (ctx) => {
     const db = getDatabase();
     const status = ctx.query.status;
     const rows = status && status !== 'all'
       ? await db.all('SELECT * FROM ads WHERE status = ? ORDER BY submitted_at DESC LIMIT 200', [status])
       : await db.all('SELECT * FROM ads ORDER BY submitted_at DESC LIMIT 200');
-    return {
-      ads: rows.map((row) => ({
-        id: row.id, title: row.title, body: row.body, targetUrl: row.target_url,
-        status: row.status, submittedAt: Number(row.submitted_at),
-        reviewNote: row.review_note,
-        impressions: Number(row.impressions), clicks: Number(row.clicks),
-      })),
-    };
+    return { ads: rows.map(publicAd) };
   }, { permission: 'ads.view' });
 
   router.post('/api/admin/ads/:id', async (ctx) => {
@@ -332,12 +424,28 @@ export function registerContentRoutes(router) {
 
     await db.run('UPDATE ads SET status = ?, reviewed_by = ?, reviewed_at = ?, review_note = ? WHERE id = ?',
       [body.status, ctx.user.id, Date.now(), trim(body.note, 400), row.id]);
-    await audit(ctx.actor, `ads.${body.status}`, 'ad', String(row.id), { note: body.note });
     return { ok: true };
   }, { permission: 'ads.approve' });
 }
 
 // ---------------------------------------------------------------------------
+
+/** One advert as both its owner and a reviewer see it. */
+function publicAd(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    body: row.body,
+    targetUrl: row.target_url,
+    image: row.image_path ? `/media/ads/${row.image_path}` : null,
+    placement: row.placement ?? 'menu',
+    status: row.status,
+    submittedAt: Number(row.submitted_at),
+    reviewNote: row.review_note,
+    impressions: Number(row.impressions ?? 0),
+    clicks: Number(row.clicks ?? 0),
+  };
+}
 
 async function ticketsFor(userId) {
   const db = getDatabase();

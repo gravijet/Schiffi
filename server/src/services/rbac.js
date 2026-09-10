@@ -5,15 +5,22 @@
  * deactivated and deleted at runtime.  Permission *keys* are code-defined, so
  * a role can never grant an ability the server does not implement.
  *
+ * Above all of that sits exactly one account, and it is deliberately outside
+ * the model: the superadmin is whoever holds config.superadmin.email. It has
+ * no role, no wildcard permission and no row of its own, so an administrator
+ * reading the roles table, the permissions table or another account's role
+ * list finds nothing that hints a higher level exists. That is a requirement
+ * here, not a nicety - see routes/superadmin.js for the other half of it.
+ *
  * A short-lived cache keeps the hot path (one permission check per request)
  * off the database; it is invalidated on every write.
  */
-import { PERMISSIONS, BOOTSTRAP_ROLES, WILDCARD, isKnownPermission } from './permissions.js';
+import { PERMISSIONS, PERMISSION_KEYS, BOOTSTRAP_ROLES, isKnownPermission } from './permissions.js';
 import { getDatabase } from '../db/index.js';
-import { audit } from './audit.js';
+import config from '../config.js';
 
 const CACHE_TTL_MS = 30_000;
-const cache = new Map(); // userId -> { at, permissions: Set, roles: [] }
+const cache = new Map(); // userId -> { at, permissions: Set, roles: [], superadmin: bool }
 
 export function invalidateUser(userId) {
   cache.delete(String(userId));
@@ -35,11 +42,6 @@ export async function syncPermissions() {
       await db.insert('permissions', perm);
     }
   }
-  // The wildcard is a real row so role_permissions can reference it.
-  if (!existing.has(WILDCARD)) {
-    await db.run('INSERT INTO permissions (key, category, description) VALUES (?, ?, ?)',
-      [WILDCARD, 'system', 'Every permission, including future ones']).catch(() => {});
-  }
 
   for (const role of BOOTSTRAP_ROLES) {
     const found = await db.get('SELECT id FROM roles WHERE key = ?', [role.key]);
@@ -57,6 +59,18 @@ export async function syncPermissions() {
   invalidateAll();
 }
 
+/**
+ * Is this account the superadmin?
+ *
+ * Compared against email_norm rather than email so capitalisation cannot be
+ * used to slip past it, and a deleted account never qualifies.
+ */
+export async function isSuperadmin(userId) {
+  if (!userId) return false;
+  const { superadmin } = await permissionsFor(userId);
+  return superadmin;
+}
+
 /** Effective permissions for a user, from all their active roles. */
 export async function permissionsFor(userId) {
   const cacheKey = String(userId);
@@ -64,6 +78,11 @@ export async function permissionsFor(userId) {
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit;
 
   const db = getDatabase();
+  const account = await db.get(
+    'SELECT email_norm FROM users WHERE id = ? AND deleted_at IS NULL', [userId]);
+  const superadmin = Boolean(account)
+    && String(account.email_norm ?? '').toLowerCase() === config.superadmin.email;
+
   const rows = await db.all(`
     SELECT r.key AS role_key, r.name AS role_name, rp.permission_key AS perm
     FROM user_roles ur
@@ -77,16 +96,26 @@ export async function permissionsFor(userId) {
     roles.set(row.role_key, row.role_name);
     if (row.perm) permissions.add(row.perm);
   }
-  const entry = { at: Date.now(), permissions, roles: [...roles.keys()], roleNames: [...roles.values()] };
+  // The superadmin can do everything the code knows how to do. This is
+  // computed, never stored: there is no row anywhere saying so.
+  if (superadmin) for (const key of PERMISSION_KEYS) permissions.add(key);
+
+  const entry = {
+    at: Date.now(),
+    permissions,
+    superadmin,
+    roles: [...roles.keys()],
+    roleNames: [...roles.values()],
+  };
   cache.set(cacheKey, entry);
   return entry;
 }
 
-/** True when the user holds `permission` (or the wildcard). */
+/** True when the user holds `permission`, or is the superadmin. */
 export async function can(userId, permission) {
   if (!userId) return false;
   const { permissions } = await permissionsFor(userId);
-  return permissions.has(WILDCARD) || permissions.has(permission);
+  return permissions.has(permission);
 }
 
 /** Throwing variant used by route guards. */
@@ -127,12 +156,11 @@ export async function listRoles() {
   }));
 }
 
-export async function createRole({ key, name, description = '', permissions = [], priority = 100 }, actor) {
+export async function createRole({ key, name, description = '', permissions = [], priority = 100 }) {
   const db = getDatabase();
   validateRoleKey(key);
   const unknown = permissions.filter((p) => !isKnownPermission(p));
   if (unknown.length) throw badRequest(`unknown permissions: ${unknown.join(', ')}`);
-  if (permissions.includes(WILDCARD)) throw badRequest('the wildcard permission cannot be granted to a new role');
 
   const existing = await db.get('SELECT id FROM roles WHERE key = ?', [key]);
   if (existing) throw conflict('a role with that key already exists');
@@ -149,29 +177,27 @@ export async function createRole({ key, name, description = '', permissions = []
     return roleId;
   });
 
-  await audit(actor, 'role.create', 'role', key, { name, permissions });
   invalidateAll();
   return id;
 }
 
-export async function duplicateRole(roleId, newKey, newName, actor) {
+export async function duplicateRole(roleId, newKey, newName) {
   const db = getDatabase();
   const source = await db.get('SELECT * FROM roles WHERE id = ?', [roleId]);
   if (!source) throw notFound('role');
   const perms = (await db.all('SELECT permission_key FROM role_permissions WHERE role_id = ?', [roleId]))
-    .map((r) => r.permission_key)
-    .filter((p) => p !== WILDCARD); // a duplicate never inherits the wildcard
+    .map((r) => r.permission_key);
 
   return createRole({
     key: newKey,
-    name: newName || `${source.name} (copy)`,
+    name: newName || `${source.name} (Kopie)`,
     description: source.description,
     permissions: perms,
     priority: source.priority,
-  }, actor);
+  });
 }
 
-export async function updateRole(roleId, changes, actor) {
+export async function updateRole(roleId, changes) {
   const db = getDatabase();
   const role = await db.get('SELECT * FROM roles WHERE id = ?', [roleId]);
   if (!role) throw notFound('role');
@@ -180,10 +206,7 @@ export async function updateRole(roleId, changes, actor) {
   if (changes.name !== undefined) fields.name = String(changes.name).slice(0, 80);
   if (changes.description !== undefined) fields.description = String(changes.description).slice(0, 500);
   if (changes.priority !== undefined) fields.priority = Number(changes.priority) | 0;
-  if (changes.active !== undefined) {
-    if (role.key === 'owner' && !changes.active) throw badRequest('the owner role cannot be deactivated');
-    fields.active = changes.active ? 1 : 0;
-  }
+  if (changes.active !== undefined) fields.active = changes.active ? 1 : 0;
   if (changes.key !== undefined && changes.key !== role.key) {
     if (role.system === 1) throw badRequest('a system role cannot be renamed by key');
     validateRoleKey(changes.key);
@@ -199,13 +222,6 @@ export async function updateRole(roleId, changes, actor) {
   if (changes.permissions) {
     const unknown = changes.permissions.filter((p) => !isKnownPermission(p));
     if (unknown.length) throw badRequest(`unknown permissions: ${unknown.join(', ')}`);
-    // The owner role must keep its wildcard, or the instance can lock itself out.
-    if (role.key === 'owner' && !changes.permissions.includes(WILDCARD)) {
-      throw badRequest('the owner role must keep the wildcard permission');
-    }
-    if (role.key !== 'owner' && changes.permissions.includes(WILDCARD)) {
-      throw badRequest('only the owner role may hold the wildcard permission');
-    }
     await db.tx(async (tx) => {
       await tx.run('DELETE FROM role_permissions WHERE role_id = ?', [roleId]);
       for (const perm of changes.permissions) {
@@ -214,18 +230,16 @@ export async function updateRole(roleId, changes, actor) {
     });
   }
 
-  await audit(actor, 'role.update', 'role', role.key, changes);
   invalidateAll();
 }
 
-export async function deleteRole(roleId, actor) {
+export async function deleteRole(roleId) {
   const db = getDatabase();
   const role = await db.get('SELECT * FROM roles WHERE id = ?', [roleId]);
   if (!role) throw notFound('role');
   if (role.system === 1) throw badRequest('system roles cannot be deleted');
 
   await db.run('DELETE FROM roles WHERE id = ?', [roleId]);
-  await audit(actor, 'role.delete', 'role', role.key, {});
   invalidateAll();
 }
 
@@ -239,32 +253,13 @@ export async function assignRole(userId, roleId, actor) {
       user_id: userId, role_id: roleId, granted_at: Date.now(), granted_by: actor?.userId ?? null,
     });
   }
-  await audit(actor, 'role.assign', 'user', String(userId), { role: role.key });
   invalidateUser(userId);
 }
 
-export async function removeRole(userId, roleId, actor) {
+export async function removeRole(userId, roleId) {
   const db = getDatabase();
-  const role = await db.get('SELECT key FROM roles WHERE id = ?', [roleId]);
   await db.run('DELETE FROM user_roles WHERE user_id = ? AND role_id = ?', [userId, roleId]);
-  await audit(actor, 'role.remove', 'user', String(userId), { role: role?.key });
   invalidateUser(userId);
-}
-
-/** Grant the owner role. Used by the bootstrap and never exposed over HTTP. */
-export async function grantOwner(userId) {
-  const db = getDatabase();
-  const role = await db.get('SELECT id FROM roles WHERE key = ?', ['owner']);
-  if (!role) throw new Error('owner role missing - run syncPermissions() first');
-  await assignRole(userId, role.id, { userId: null, ip: 'bootstrap' });
-}
-
-export async function ownerCount() {
-  const db = getDatabase();
-  const row = await db.get(`
-    SELECT COUNT(*) AS n FROM user_roles ur
-    JOIN roles r ON r.id = ur.role_id WHERE r.key = 'owner'`);
-  return Number(row?.n ?? 0);
 }
 
 function validateRoleKey(key) {

@@ -13,7 +13,6 @@ import { goodById } from '@schiffi/shared/data/goods.js';
 import { dist } from '@schiffi/shared/util/math.js';
 import { CELL_SIZE, NAVIGABLE } from '@schiffi/shared/world/constants.js';
 import { addCargo, removeCargo, cargoUsage } from './characters.js';
-import { audit } from '../services/audit.js';
 import { shipClass, effectiveStats } from '@schiffi/shared/data/ships.js';
 import {
   COMMISSION, MIN_AUCTION_MS, MAX_AUCTION_MS, OUTPOST_COST, BUILDING_COST,
@@ -369,8 +368,6 @@ export async function claimInsurance({ characterId, userId, payload }) {
     await tx.run('UPDATE characters SET coins = coins + ? WHERE id = ?', [payout, characterId]);
     await tx.run('UPDATE insurance_policies SET claimed_at = ?, payout = ? WHERE id = ?',
       [Date.now(), payout, policy.id]);
-    await audit({ userId }, 'insurance.claim', 'character', String(characterId),
-      { policyId: policy.id, payout }, { db: tx });
 
     return { policyId: policy.id, payout, coins: Number(character.coins) + payout };
   });
@@ -565,8 +562,6 @@ export async function buildOutpost({ instance, characterId, userId, payload }) {
       name: String(payload.name ?? `${character.name}'s Outpost`).slice(0, 40),
       x: found.anchorage.x, y: found.anchorage.y, created_at: Date.now(),
     });
-    await audit({ userId }, 'outpost.build', 'outpost', String(id),
-      { islandId: found.anchorage.islandId }, { db: tx });
 
     return { outpostId: id, cost: OUTPOST_COST, coins: Number(character.coins) - OUTPOST_COST };
   });

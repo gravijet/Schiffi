@@ -1,12 +1,17 @@
 /*
  * Schiffi's own visual language.
  *
- * The map owns the screen; every panel is a compact, translucent slab that
- * floats over it and can be collapsed. Colours come from the sea: deep navy
- * ground, weathered brass for accents, parchment for text. Nothing here is
- * borrowed from another game - the shapes are rectangles with a 2px rule and
- * a single accent line, which also happens to be the cheapest thing a browser
- * can paint.
+ * Two jobs, and they pull in different directions. Inside the game the map
+ * owns the screen and every panel is a compact translucent slab that can be
+ * collapsed. Outside it - the site, the account, the administration - the
+ * screen is a document, and it is laid out like one: a sticky header, a
+ * single readable column, generous space, soft cards.
+ *
+ * Colours come from the sea: near-black navy ground, weathered brass for
+ * accents, parchment for text. Nothing here is borrowed from another site -
+ * the shapes are rounded rectangles with a hairline border and one accent
+ * gradient, which also happens to be among the cheapest things a browser can
+ * paint.
  */
 
 :root {
@@ -47,10 +52,23 @@
   --input-bg: var(--sea-900);
   --row-hover: rgba(201, 162, 39, 0.08);
 
-  --radius: 4px;
-  --gap: 8px;
+  /* Two radii: the game's chrome stays tight, the site is softer. */
+  --radius: 6px;
+  --radius-lg: 12px;
+  --gap: 10px;
   --hud-font: 13px/1.45 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
   --mono: 12px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* One accent gradient, used for the wordmark, primary buttons and the
+     active nav underline, so the whole site is tied together by a single
+     recognisable thing rather than a dozen unrelated highlights. */
+  --accent: linear-gradient(135deg, #f0d478 0%, #c9a227 55%, #a8791b 100%);
+  --accent-soft: linear-gradient(135deg, rgba(240, 212, 120, 0.16), rgba(201, 162, 39, 0.06));
+  --site-bg: #050c12;
+  --site-header-bg: rgba(6, 15, 22, 0.82);
+  --site-card-bg: rgba(16, 32, 44, 0.72);
+  --site-card-border: rgba(255, 255, 255, 0.08);
+  --site-card-hover: rgba(240, 212, 120, 0.4);
 
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -93,6 +111,14 @@
   --warn: #a06a10;
   --bad: #a63a24;
   --info: #245e86;
+
+  --accent: linear-gradient(135deg, #b8912a 0%, #8a6d12 60%, #6b520a 100%);
+  --accent-soft: linear-gradient(135deg, rgba(138, 109, 18, 0.14), rgba(138, 109, 18, 0.04));
+  --site-bg: #f4f1e8;
+  --site-header-bg: rgba(246, 243, 235, 0.9);
+  --site-card-bg: rgba(255, 253, 248, 0.86);
+  --site-card-border: rgba(20, 39, 53, 0.12);
+  --site-card-hover: rgba(138, 109, 18, 0.45);
 }
 
 * { box-sizing: border-box; }
@@ -191,27 +217,37 @@ html, body {
 /* --- controls ------------------------------------------------------------ */
 button, .btn {
   appearance: none;
-  font: inherit;
+  font: inherit; font-weight: 500;
   color: var(--parchment);
   background: var(--sea-600);
   border: 1px solid var(--sea-400);
-  border-radius: 3px;
-  padding: 6px 12px;
+  border-radius: var(--radius);
+  padding: 7px 14px;
   cursor: pointer;
-  min-height: 32px;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  min-height: 34px;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.08s ease;
 }
 button:hover:not(:disabled), .btn:hover { background: var(--sea-500); border-color: var(--brass-500); }
+button:active:not(:disabled) { transform: translateY(1px); }
+/* Keyboard focus has to be visible; a pointer click must not draw a ring. */
+button:focus-visible, .btn:focus-visible, a:focus-visible {
+  outline: 2px solid var(--brass-400); outline-offset: 2px;
+}
 button:disabled { opacity: 0.45; cursor: not-allowed; }
-button.primary { background: var(--brass-500); color: var(--ink); border-color: var(--brass-400); font-weight: 600; }
-button.primary:hover:not(:disabled) { background: var(--brass-400); }
+button.primary {
+  background: var(--accent); color: var(--ink);
+  border-color: transparent; font-weight: 650;
+}
+button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 button.ghost { background: transparent; border-color: var(--panel-border); }
 button.danger { background: transparent; border-color: var(--bad); color: var(--bad); }
+button.danger:hover:not(:disabled) { background: rgba(211, 89, 63, 0.12); border-color: var(--bad); }
+button.small { min-height: 28px; padding: 4px 10px; font-size: 12px; }
 
 input, select, textarea {
   font: inherit; color: var(--parchment);
   background: var(--input-bg); border: 1px solid var(--sea-500);
-  border-radius: 3px; padding: 6px 8px; width: 100%; min-height: 32px;
+  border-radius: var(--radius); padding: 8px 10px; width: 100%; min-height: 34px;
 }
 input:focus, select:focus, textarea:focus { outline: 1px solid var(--brass-500); border-color: var(--brass-500); }
 label { display: block; font-size: 12px; color: var(--parchment-dim); margin-bottom: 3px; }
@@ -264,7 +300,12 @@ tr.is-selected { background: rgba(201, 162, 39, 0.16); }
 
 /* --- modal --------------------------------------------------------------- */
 .modal-backdrop {
-  position: fixed; inset: 0; z-index: 80;
+  /* Above the boot overlay (z-index 100). It used to sit below it, which made
+     the first-visit language dialog invisible: the page appeared to hang on
+     the loading screen for ever, because it was waiting for a click on a
+     dialog nobody could see. Boot is torn down before any dialog opens now,
+     but a modal must never be able to end up underneath anything again. */
+  position: fixed; inset: 0; z-index: 120;
   background: rgba(3, 8, 12, 0.72);
   display: grid; place-items: center; padding: 16px;
 }

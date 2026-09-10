@@ -1,10 +1,15 @@
 /**
- * Main menu.
+ * The site outside the game.
  *
- * Compact and fast: a fixed nav column and one content pane, no page loads.
- * Every screen talks to the real API - the world list is the server's world
- * list, the leaderboard is the server's leaderboard, and "Play" starts an
- * actual session.
+ * Every screen here is a real page with a real address - /support, /news,
+ * /advertise and the rest - so a link can be sent, a tab bookmarked and the
+ * back button trusted. Navigation stays client-side (nothing is re-downloaded
+ * on a click) while the URL follows along, and the server returns the same
+ * shell for all of these paths so a reload lands where the visitor was.
+ *
+ * What is deliberately absent: any mention of a superadmin console. That is a
+ * separate document, served by the server to one account, and nothing in this
+ * bundle links to it, names it or knows it exists.
  */
 import { h, add, clear, toast, modal, confirmDialog } from './dom.js';
 import { t, tc, td, currentLocale } from '../state/i18n.js';
@@ -17,6 +22,33 @@ import { manualView } from './manual.js';
 import { avatarCard, placeholder } from './avatar.js';
 import { countdown } from './panels/missions.js';
 
+/**
+ * Every address the site answers to.
+ *
+ * The server returns the application shell for all of them, so these are real
+ * URLs rather than fragments: /support can be linked to, reloaded and shared.
+ */
+const ROUTES = {
+  '/': 'play',
+  '/play': 'play',
+  '/worlds': 'multiplayer',
+  '/leaderboard': 'leaderboard',
+  '/news': 'news',
+  '/manual': 'manual',
+  '/support': 'support',
+  '/advertise': 'ads',
+  '/profile': 'profile',
+  '/settings': 'settings',
+  '/status': 'status',
+  '/admin': 'admin',
+};
+
+/** The canonical path for a screen: the first entry that names it. */
+const PATHS = Object.entries(ROUTES).reduce((out, [path, screen]) => {
+  if (!(screen in out)) out[screen] = path;
+  return out;
+}, { notFound: '/404' });
+
 export class MainMenu {
   constructor({ onPlay, onLogout }) {
     this.onPlay = onPlay;
@@ -24,9 +56,18 @@ export class MainMenu {
     this.screen = 'play';
     this.session = null;
     this.root = h('div#menu-screen');
-    this.nav = h('div.menu-nav');
-    this.main = h('div.menu-main');
-    this.root.append(h('div.menu-shell', null, this.nav, this.main));
+    this.nav = h('nav.site-nav');
+    this.main = h('main.site-main');
+    this.brand = h('a.site-brand', { href: '/', onClick: (e) => { e.preventDefault(); this.go('play'); } },
+      h('span.site-brand__mark', { 'aria-hidden': 'true' }),
+      h('span.site-brand__name', null, 'Schiffi'));
+    this.account = h('div.site-account');
+    this.footer = h('footer.site-footer');
+    this.root.append(
+      h('header.site-header', null,
+        h('div.site-header__inner', null, this.brand, this.nav, this.account)),
+      this.main,
+      this.footer);
   }
 
   mount(parent) {
@@ -85,84 +126,138 @@ export class MainMenu {
 
   get canAdminister() {
     const permissions = this.session?.permissions ?? [];
-    return permissions.includes('*')
-      || permissions.some((p) => p.startsWith('users.') || p.startsWith('roles.') || p.startsWith('world.'));
+    return permissions.some((p) =>
+      p.startsWith('users.') || p.startsWith('roles.') || p.startsWith('world.')
+      || p.startsWith('support.') || p.startsWith('news.') || p === 'ads.view');
   }
 
   /**
-   * A superadmin is an account holding the wildcard - the owner role, or any
-   * role an owner has given it. It is not a hard-coded name or id: roles are
-   * data here, so "who is superadmin" has to be a question about permissions.
-   */
-  get isSuperadmin() {
-    return (this.session?.permissions ?? []).includes('*');
-  }
-
-  /**
-   * Screens that have their own URL.
+   * The screen behind a path, and the path behind a screen.
    *
-   * Only /superadmin needs one: it is the address an operator types, and it
-   * has to survive a reload and a bookmark. Everything else stays a plain
-   * in-page screen, so no history entries pile up while browsing the menu.
+   * One table, read in both directions, so a URL and a nav button can never
+   * drift apart. An unknown path is not silently turned into the home page -
+   * it becomes the notFound screen, because a mistyped address that quietly
+   * shows something else is worse than one that says so.
    */
   static routeFor(pathname) {
-    return /^\/superadmin\/?$/i.test(pathname) ? 'superadmin' : null;
+    const path = String(pathname || '/').replace(/\/+$/, '') || '/';
+    return ROUTES[path] ?? 'notFound';
+  }
+
+  static pathFor(screen) {
+    return PATHS[screen] ?? '/';
   }
 
   applyRoute() {
-    const screen = MainMenu.routeFor(location.pathname);
-    if (screen) this.screen = screen;
+    this.screen = MainMenu.routeFor(location.pathname);
+  }
+
+  /** Go to a screen and put its address in the bar. */
+  go(screen, { push = true } = {}) {
+    if (this.screen === screen && push) return;
+    this.screen = screen;
+    const wanted = MainMenu.pathFor(screen);
+    if (push && location.pathname !== wanted) {
+      history.pushState({ screen }, '', wanted);
+    }
+    this.render();
+    this.main.scrollTop = 0;
   }
 
   render() {
     this.renderNav();
     this.renderMain();
+    this.renderFooter();
+  }
+
+  /**
+   * Footer: the pages that do not earn a place in the header, and the adverts.
+   *
+   * The adverts are real ones - approved by a reviewer, counted by the server
+   * when they are handed out, and counted again when they are clicked. Data
+   * saver skips the request entirely, because somebody who asked for less
+   * traffic should not be spending it on advertising.
+   */
+  renderFooter() {
+    clear(this.footer);
+    const link = (screen, label) => h('button.site-footer__link', {
+      onClick: () => this.go(screen),
+    }, label);
+
+    const ads = h('div.site-ads');
+    add(this.footer,
+      ads,
+      h('div.site-footer__links', null,
+        link('status', t('menu.serverStatus')),
+        link('ads', t('ads.mine')),
+        link('support', t('menu.support')),
+        link('manual', t('menu.manual')),
+        h('span.grow'),
+        h('span.small.muted', null, `Schiffi · ${new Date().getFullYear()}`)));
+
+    if (settings.get('dataSaver')) return;
+    api.ads().then(({ ads: items }) => {
+      if (!items.length) return;
+      for (const ad of items) {
+        add(ads, h('a.site-ad', {
+          href: ad.targetUrl, target: '_blank', rel: 'noopener noreferrer sponsored',
+          onClick: () => { api.adClick(ad.id).catch(() => {}); },
+        },
+        ad.image ? h('img.site-ad__image', { src: ad.image, alt: '', loading: 'lazy' }) : null,
+        h('div', null,
+          h('strong', null, ad.title),
+          h('div.small.muted', null, ad.body))));
+      }
+      ads.append(h('div.small.muted.site-ads__label', null, t('promo.note')));
+    }).catch(() => { /* no adverts: the footer stands without them */ });
   }
 
   renderNav() {
     clear(this.nav);
-    const item = (key, label) => h(`button${this.screen === key ? '.is-active' : ''}`, {
-      onClick: () => {
-        this.screen = key;
-        // Keep the address bar in step with the one screen that has a URL,
-        // so a reload or a bookmark lands where the operator expects.
-        const wanted = key === 'superadmin' ? '/superadmin' : '/';
-        if (location.pathname !== wanted) history.pushState({ screen: key }, '', wanted);
-        this.render();
-      },
+    clear(this.account);
+
+    // Only rebuild what changed: the active class is the only thing a click
+    // alters up here, so the buttons themselves are created once per render
+    // and the handler never touches the rest of the page.
+    const item = (key, label) => h(`button.site-nav__link${this.screen === key ? '.is-active' : ''}`, {
+      onClick: () => this.go(key),
     }, label);
 
     add(this.nav,
-      h('div.logo', null,
-        h('h1', null, t('app.name')),
-        h('p', null, t('app.tagline'))),
       item('play', t('menu.play')),
       item('multiplayer', t('menu.multiplayer')),
-      item('profile', t('menu.profile')),
       item('leaderboard', t('leaderboard.title')),
-      item('manual', t('menu.manual')),
       item('news', t('menu.news')),
+      item('manual', t('menu.manual')),
       item('support', t('menu.support')),
-      item('settings', t('menu.settings')),
-      item('server', t('menu.serverStatus')),
+      // Advertising is only offered to accounts that may actually submit one.
+      this.can('ads.submit') ? item('ads', t('ads.mine')) : null,
       // The administration entry only exists for accounts that hold a
       // permission for it: an ordinary player never sees it.
       this.canAdminister ? item('admin', t('admin.title')) : null,
-      // The superadmin console is a separate entry, and a separate URL, so it
-      // is never something an operator lands on by accident.
-      this.isSuperadmin ? item('superadmin', t('superadmin.title')) : null,
-      h('div.spacer'),
-      this.session
-        ? h('button', {
-          onClick: async () => {
-            await api.logout();
-            this.session = null;
-            this.onLogout?.();
-            this.render();
-          },
-        }, t('menu.logout'))
-        : null,
     );
+
+    add(this.account,
+      h('button.icon-link', { onClick: () => this.go('settings'), title: t('menu.settings') }, '\u2699'),
+      this.session
+        ? h('div.site-account__user', null,
+          h('button.site-account__name', { onClick: () => this.go('profile') },
+            this.session.user.username),
+          h('button.ghost.small', {
+            onClick: async () => {
+              await api.logout();
+              this.session = null;
+              this.onLogout?.();
+              this.go('play', { push: false });
+            },
+          }, t('menu.logout')))
+        : h('button.primary.small', { onClick: () => this.go('play') }, t('auth.login')),
+    );
+  }
+
+  /** Does the signed-in account hold this permission? */
+  can(permission) {
+    return (this.session?.permissions ?? []).includes(permission);
   }
 
   renderMain() {
@@ -176,9 +271,10 @@ export class MainMenu {
       news: () => this.newsScreen(),
       support: () => this.supportScreen(),
       settings: () => this.settingsScreen(),
-      server: () => this.serverScreen(),
+      status: () => this.serverScreen(),
+      ads: () => this.adsScreen(),
       admin: () => adminView(this.session),
-      superadmin: () => this.superadminScreen(),
+      notFound: () => this.notFoundScreen(),
     }[this.screen];
     add(this.main, view ? view() : h('div'));
   }
@@ -187,15 +283,33 @@ export class MainMenu {
 
   playScreen() {
     const root = h('div');
+
+    // Signed out, this is the front page rather than a form on an empty
+    // screen: what the game is, what the server is doing right now, and the
+    // sign-in beside it.
+    if (!this.session) {
+      const facts = h('div.hero__facts');
+      api.status().then((status) => {
+        clear(facts);
+        add(facts,
+          fact(String(status.goods), t('app.factGoods')),
+          fact(String(status.locales.length), t('app.factLanguages')),
+          fact(String(status.playersOnline), t('app.factOnline')));
+      }).catch(() => { /* the hero reads fine without the numbers */ });
+
+      add(root, h('div.hero', null,
+        h('div.hero__text', null,
+          h('h2', null, t('app.tagline')),
+          h('p.lede', null, t('mode.traderDesc')),
+          facts),
+        this.authCard()));
+      return root;
+    }
+
     root.append(
       h('h2', null, t('menu.play')),
       h('p.lede', null, t('mode.traderDesc')),
     );
-
-    if (!this.session) {
-      root.append(this.authCard());
-      return root;
-    }
 
     const list = h('div.stack');
     // Filled in once the character list is known: with no captain it offers to
@@ -456,7 +570,7 @@ export class MainMenu {
             h('dt', null, t('server.tick')), h('dd', null, `${status.tps.toFixed(1)} /s`),
             h('dt', null, 'NPC'), h('dd', null, String(status.npcs)),
             h('dt', null, t('weather.storm')), h('dd', null, String(status.storms)),
-            h('dt', null, t('season.spring')), h('dd', null, t(seasonKey(status.season)))));
+            h('dt', null, t('hud.season')), h('dd', null, t(seasonKey(status.season)))));
         }).catch(() => {});
       }
     }).catch(() => list.append(h('p.bad', null, t('error.network'))));
@@ -819,50 +933,97 @@ export class MainMenu {
   }
 
   /**
-   * The superadmin console at /superadmin.
+   * Advertising.
    *
-   * It is not a second copy of the administration screen: it frames it. The
-   * header states what this account may do and what the installation's
-   * password policy actually is, because an operator standing in front of a
-   * "show password" button should be able to read what that button means
-   * without going to the source.
-   *
-   * The permission check here is cosmetic - every endpoint behind it checks
-   * again on the server, which is where the boundary really is.
+   * Real from end to end: the picture is uploaded to the server, the advert
+   * waits for a reviewer, and the impression and click figures shown here are
+   * the ones the server counted. An account without the permission is told
+   * exactly what is missing rather than shown a form that would 403.
    */
-  superadminScreen() {
-    const root = h('div.superadmin');
+  adsScreen() {
+    const root = h('div');
+    add(root,
+      h('h2', null, t('ads.mine')),
+      h('p.lede', null, t('ads.lede')));
 
     if (!this.session) {
-      return h('div', null,
-        h('h2', null, t('superadmin.title')),
-        h('p.lede', null, t('superadmin.signInFirst')),
-        this.authCard());
+      root.append(this.authCard());
+      return root;
     }
-    if (!this.isSuperadmin) {
-      return h('div', null,
-        h('h2', null, t('superadmin.title')),
-        h('div.card', null, h('p.bad', null, t('superadmin.denied'))));
+    if (!this.can('ads.submit')) {
+      root.append(h('div.card', null,
+        h('div.card__title', null, t('ads.noPermission')),
+        h('p.small.muted', null, t('ads.noPermissionHint')),
+        h('button', { onClick: () => this.go('support') }, t('menu.support'))));
+      return root;
     }
 
-    const vault = h('div.card');
-    api.adminSystem()
-      .then((info) => {
-        clear(vault);
-        const enabled = info.passwordVaultEnabled === true;
-        vault.append(
-          h('div.card__title', null, t('superadmin.vaultTitle')),
-          h('p.small', null, t(enabled ? 'superadmin.vaultOn' : 'superadmin.vaultOff')));
-      })
-      .catch(() => { clear(vault); vault.append(h('p.bad.small', null, t('app.offline'))); });
+    const list = h('div.stack');
+    const title = h('input', { placeholder: t('ads.adTitle'), maxLength: 90 });
+    const body = h('textarea', { rows: 3, placeholder: t('ads.adBody'), maxLength: 400 });
+    const target = h('input', { placeholder: 'https://…', maxLength: 300 });
+    const file = h('input', { type: 'file', accept: 'image/webp,image/png,image/jpeg' });
+
+    const refresh = async () => {
+      clear(list);
+      list.append(h('p.small.muted', null, t('common.loading')));
+      try {
+        const { ads } = await api.myAds();
+        clear(list);
+        if (!ads.length) { list.append(h('p.muted', null, t('ads.none'))); return; }
+        for (const ad of ads) list.append(adCard(ad, refresh));
+      } catch (error) {
+        clear(list);
+        list.append(h('p.bad', null, t(error.code ?? 'error.generic')));
+      }
+    };
+
+    const submit = async () => {
+      try {
+        const created = await api.submitAd({
+          title: title.value.trim(),
+          body: body.value.trim(),
+          targetUrl: target.value.trim(),
+        });
+        // The picture is optional, and it is uploaded after the advert exists
+        // so a failed image never loses the text the advertiser just typed.
+        if (file.files?.[0]) await api.uploadAdImage(created.id, file.files[0]);
+        title.value = ''; body.value = ''; target.value = ''; file.value = '';
+        toast(t('ads.submitted'), 'good');
+        refresh();
+      } catch (error) {
+        toast(t(error.code ?? 'error.generic'), 'bad');
+      }
+    };
 
     add(root,
-      h('div.superadmin__head', null,
-        h('h2', null, t('superadmin.title')),
-        h('p.lede', null, t('superadmin.lede', { user: this.session.user.username }))),
-      vault,
-      adminView(this.session));
+      h('div.card', null,
+        h('div.card__title', null, t('ads.newAd')),
+        h('div.field', null, h('label', null, t('ads.adTitle')), title),
+        h('div.field', null, h('label', null, t('ads.adBody')), body),
+        h('div.field', null, h('label', null, t('ads.targetUrl')), target),
+        h('div.field', null, h('label', null, t('ads.image')), file,
+          h('p.small.muted', null, t('ads.imageHint'))),
+        h('button.primary', { onClick: submit }, t('ads.submit'))),
+      h('h3', null, t('ads.yours')),
+      list);
+
+    refresh();
     return root;
+  }
+
+  /**
+   * An address that is not a page.
+   *
+   * Shown for anything the route table does not know, including /superadmin
+   * when the visitor is not the one account that may open it - the answer has
+   * to be identical to a genuine typo, or the address itself becomes a hint.
+   */
+  notFoundScreen() {
+    return h('div.notfound', null,
+      h('h2', null, '404'),
+      h('p.lede', null, t('error.pageNotFound')),
+      h('button.primary', { onClick: () => this.go('play') }, t('menu.play')));
   }
 
   serverScreen() {
@@ -883,6 +1044,40 @@ export class MainMenu {
 
     return root;
   }
+}
+
+/**
+ * One of an advertiser's own adverts.
+ *
+ * The status badge is the honest one: "pending" means a person still has to
+ * look at it, and the figures are what the server counted, not an estimate.
+ */
+function adCard(ad, onChange) {
+  return h('div.card.ad-card', null,
+    ad.image ? h('img.ad-card__image', { src: ad.image, alt: '', loading: 'lazy' }) : null,
+    h('div.grow', null,
+      h('div.row.row--between', null,
+        h('strong', null, ad.title),
+        h(`span.small.badge.badge--${ad.status}`, null, t(`ads.${ad.status}`))),
+      h('p.small.muted', { style: { margin: '4px 0' } }, ad.body),
+      h('div.small.mono.muted', null, ad.targetUrl),
+      ad.reviewNote ? h('p.small.warn', null, ad.reviewNote) : null,
+      h('div.row', { style: { marginTop: '6px' } },
+        h('span.small.muted', null,
+          t('ads.stats', { impressions: ad.impressions, clicks: ad.clicks })),
+        h('span.grow'),
+        h('button.ghost.small.danger', {
+          onClick: async () => {
+            try { await api.deleteAd(ad.id); onChange(); }
+            catch (error) { toast(t(error.code ?? 'error.generic'), 'bad'); }
+          },
+        }, t('common.delete')))));
+}
+
+function fact(value, label) {
+  return h('div.hero__fact', null,
+    h('div.hero__fact-value', null, value),
+    h('div.hero__fact-label', null, label));
 }
 
 function seasonKey(season) {

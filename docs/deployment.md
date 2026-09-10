@@ -44,6 +44,24 @@ sudo scripts/refresh-cloudflare-ips.sh   # fetches, validates, tests, reloads
 It refuses to install a list that came back short, and rolls back if
 `nginx -t` fails - an empty allow-list here is a total outage.
 
+### Zero Trust on /superadmin
+
+The superadmin console is additionally behind a Cloudflare Access application,
+so the request is challenged at the edge before it reaches this machine.
+
+| | |
+| --- | --- |
+| Application | `superdavid.eu/superadmin`, self-hosted |
+| Policy | allow, e-mail equals `hi@benjaminberger.at` |
+| Identity provider | one-time PIN |
+| Session | 8 hours, auto-redirect to identity |
+| AUD tag | `3cf359e08294f23de15f05fd5ab5ee8ee189f521dbec44df9e9c9bb0c896d297` |
+
+Anything else on the zone is untouched: `/` and `/api/*` stay open. This is a
+second lock, not the only one - the server checks `SUPERADMIN_EMAIL` against
+the session on every request behind that path and answers 404 to everyone
+else, so bypassing the edge gains nothing.
+
 ### What is configured at the edge
 
 | Setting | Value |
@@ -96,7 +114,7 @@ npm run test:all                                  # SQLite, the default
 TEST_DATABASE_URL=postgres://…/schiffi_test npm run test:all   # PostgreSQL
 ```
 
-Both dialects run the same 88 tests. The PostgreSQL run needs a throwaway
+Both dialects run the same 77 server tests; 27 more run in a real browser. The PostgreSQL run needs a throwaway
 database: each suite drops and recreates its own schema inside it.
 
 ## DNS
@@ -128,11 +146,19 @@ MX records.
   verify this origin's certificate. The certificate is a real Let's Encrypt
   one, so switching the zone to strict would work - it is a zone-wide setting
   and also affects `ai.superdavid.eu`.
-- **The first account to register becomes the owner** (`ownerCount() === 0` in
-  `services/auth.js`). Further owners are granted from `/superadmin`.
+- **There is no audit trail.** It was removed on the operator's instruction,
+  along with the `audit_log` table (migration `008`). Administrative actions -
+  bans, deletions, role changes, password reads - now leave no record of who
+  performed them.
 - **`PASSWORD_VAULT_KEY` is set on this host**, so the superadmin console can
   display a stored password. See the *Passwords* section of the README for what
   that costs. Accounts whose password predates the key report `notStored` and
   stay unreadable until their next password change - Argon2id cannot be
   reversed. Back this key up separately from the database, and never in the
-  same place: together they are every password on the server.
+  same place: together they are every password on the server. The nightly
+  `pg_dump` lands in `/var/backups/schiffi`, so that is precisely where the key
+  must not go.
+- **The Cloudflare credentials in `/etc/schiffi/schiffi.env` are a Global API
+  Key.** It authorises the whole account, not just this zone, and cannot be
+  scoped. Replace it with a scoped API token (`CLOUDFLARE_API_TOKEN`) limited
+  to `superdavid.eu`; the client already prefers a token when one is set.

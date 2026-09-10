@@ -19,6 +19,18 @@ export default defineConfig({
     cssCodeSplit: true,
     reportCompressedSize: false,
     rollupOptions: {
+      /**
+       * Two documents, not one.
+       *
+       * console.html is the superadmin console. It is built here so it gets
+       * the same tooling as everything else, but nothing in index.html links
+       * to it and the server refuses to serve it as a static file - it is
+       * handed out by routes/superadmin.js, to one account.
+       */
+      input: {
+        index: resolve(import.meta.dirname, 'index.html'),
+        console: resolve(import.meta.dirname, 'console.html'),
+      },
       output: {
         manualChunks(id) {
           if (id.includes('/i18n/locales/')) {

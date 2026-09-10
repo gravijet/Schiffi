@@ -83,6 +83,18 @@ export const config = {
     spoolDir: resolve(ROOT, process.env.MAIL_SPOOL_DIR || 'data/mail'),
   },
 
+  /**
+   * The one superadmin.
+   *
+   * Not a role, not a database row, not something an administrator can grant
+   * or discover: a single address compared against users.email_norm. Changing
+   * it means changing the environment and restarting, which is the point -
+   * nothing reachable over HTTP can promote anybody.
+   */
+  superadmin: {
+    email: (process.env.SUPERADMIN_EMAIL || 'hi@benjaminberger.at').trim().toLowerCase(),
+  },
+
   cloudflare: {
     authEmail: process.env.CLOUDFLARE_AUTH_EMAIL || '',
     globalKey: process.env.CLOUDFLARE_GLOBAL_API_KEY || '',

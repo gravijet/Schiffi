@@ -19,7 +19,6 @@ import { findingsFor, wildlifeFor, ACTIVITY_COST, ACTIVITIES, RARITY_CHANCE }
   from '@schiffi/shared/data/discoveries.js';
 import { generateIslandName } from '@schiffi/shared/world/names.js';
 import { addCargo, cargoUsage } from './characters.js';
-import { audit } from '../services/audit.js';
 import { awardXp } from './progression.js';
 import { LANDING_RANGE } from '@schiffi/shared/data/costs.js';
 import { treasureOn } from './world.js';
@@ -96,8 +95,6 @@ export async function land({ instance, characterId, userId }) {
       await tx.run(
         'UPDATE crew_members SET morale = LEAST(100, morale + 20) WHERE ship_id = ?',
         [character.active_ship_id]);
-      await audit({ userId: character.user_id }, 'explore.first_discovery', 'island',
-        `${instance.id}:${island.id}`, { player: character.name }, { db: tx });
     }
 
     // Every island you have set foot on goes into the album, first or not:
@@ -380,8 +377,6 @@ export async function proposeName({ instance, characterId, userId, payload }) {
       'WHERE world_id = ? AND island_id = ?',
       [name, status, status === 'approved' ? name : null, instance.id, payload.islandId]);
 
-    await audit({ userId }, 'explore.name_proposed', 'island', `${instance.id}:${payload.islandId}`,
-      { name, status }, { db: tx });
 
     return { islandId: payload.islandId, name, status };
   });
@@ -433,8 +428,6 @@ export async function moderateName({ worldId, islandId, decision, replacement, a
     [status, decision === 'approve' ? row.proposed_name : finalName,
       actor?.userId ?? null, Date.now(), worldId, islandId]);
 
-  await audit(actor, 'explore.name_moderated', 'island', `${worldId}:${islandId}`,
-    { decision, finalName });
   return { islandId, status, finalName: decision === 'approve' ? row.proposed_name : finalName };
 }
 

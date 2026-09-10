@@ -49,9 +49,19 @@ function progress(fraction, message) {
 async function main() {
   progress(0.05, '…');
 
-  // 1. Language first: everything after this point is rendered translated.
-  await chooseLanguage();
-  progress(0.2, t('app.loading'));
+  // Three independent things the first paint needs. They used to happen one
+  // after another, with the language picker *blocking* everything behind it -
+  // and because that dialog was drawn under the boot overlay, a first-time
+  // visitor saw the loading screen and nothing else, for ever. Nothing here
+  // blocks on a human any more, and the picker comes after the boot screen is
+  // gone, where it can actually be seen.
+  const storedLocale = settings.get('locale');
+  const [, session, promo] = await Promise.all([
+    loadLocale(storedLocale ?? detectLocale()),
+    api.me().then((r) => (r?.user ? r : null)).catch(() => null),
+    fetchInterstitial(),
+  ]);
+  progress(0.35, t('app.loading'));
 
   // 2. Appearance and quality. Auto-detect runs once and is then remembered.
   applyTheme(settings.get('theme'));
@@ -77,26 +87,31 @@ async function main() {
     state.renderer?.resize();
   });
 
-  // 3. Menu. The player can browse while the world downloads.
-  progress(0.35, t('app.connecting'));
+  // 3. Menu. Every screen has a real address, read here and again on every
+  // back and forward step.
   state.menu = new MainMenu({
     onPlay: (character) => startGame(character),
     onLogout: () => { stopGame(); },
   });
-  await state.menu.refreshSession();
-  // /superadmin has to work as a typed address and survive a reload, so the
-  // path is read once here and then again on every back/forward step.
+  state.menu.session = session;
   state.menu.applyRoute();
   state.menu.mount(app);
 
   window.addEventListener('popstate', () => {
     if (state.running) return;          // in game: the map owns the screen
-    state.menu.screen = MainMenu.routeFor(location.pathname) ?? 'play';
+    state.menu.screen = MainMenu.routeFor(location.pathname);
     state.menu.render();
   });
 
   progress(1, '');
   boot?.remove();
+
+  // 4. The advert in front of the site, if the operator has put one there.
+  if (promo) await showInterstitial(promo);
+
+  // 5. First visit: ask which language, now that there is nothing on top of
+  // the dialog. A returning visitor never sees this.
+  if (!storedLocale) await chooseLanguage({ force: true });
 
   // A single inspection handle: useful in the console, and what the browser
   // test drives. It exposes live objects, never a way to change game state -
@@ -106,11 +121,85 @@ async function main() {
     get renderer() { return state.renderer; },
     get character() { return state.character; },
     get world() { return state.world; },
+    get menu() { return state.menu; },
     settings,
     setLocale: (code) => import('./ui/language.js').then((m) => m.setLocale(code)),
   };
 
   registerServiceWorker();
+}
+
+/**
+ * The advert the operator has put in front of the site.
+ *
+ * Data saver means the visitor asked not to download decoration, and this is
+ * the largest optional thing on the page; a failure is silent, because a
+ * broken advert must never be the reason somebody cannot reach the game.
+ */
+async function fetchInterstitial() {
+  if (settings.get('dataSaver')) return null;
+  try {
+    const { interstitial } = await api.interstitial();
+    return interstitial ?? null;
+  } catch { return null; }
+}
+
+/**
+ * Show it, and resolve when the visitor moves on.
+ *
+ * The continue button is disabled for the configured number of seconds and
+ * counts down visibly, so the wait is stated rather than merely imposed. Zero
+ * seconds means it can be dismissed at once. Escape works throughout: an
+ * advert that can trap somebody on the page is not one this site will serve.
+ */
+function showInterstitial(promo) {
+  return new Promise((resolve) => {
+    const skip = h('button.primary', { disabled: promo.seconds > 0 });
+    let left = Math.max(0, Number(promo.seconds) || 0);
+
+    const done = () => {
+      clearInterval(timer);
+      document.removeEventListener('keydown', onKey);
+      layer.remove();
+      resolve();
+    };
+    const onKey = (event) => { if (event.key === 'Escape') done(); };
+    skip.addEventListener('click', done);
+
+    const label = () => { skip.textContent = left > 0 ? `${t('promo.continueIn', { seconds: left })}` : t('promo.continue'); };
+    label();
+    const timer = setInterval(() => {
+      left -= 1;
+      if (left <= 0) { left = 0; skip.disabled = false; clearInterval(timer); }
+      label();
+    }, 1000);
+
+    const visit = () => {
+      if (!promo.targetUrl) return;
+      api.interstitialClick(promo.id).catch(() => {});
+      window.open(promo.targetUrl, '_blank', 'noopener,noreferrer');
+    };
+
+    const card = h('div.promo__card', null,
+      promo.image
+        ? h('img.promo__image', {
+          src: promo.image, alt: promo.headline,
+          onClick: visit,
+          style: { cursor: promo.targetUrl ? 'pointer' : 'default' },
+        })
+        : null,
+      h('h1.promo__headline', null, promo.headline),
+      promo.body ? h('p.promo__body', null, promo.body) : null,
+      h('div.promo__actions', null,
+        promo.targetUrl ? h('button.ghost', { onClick: visit }, t('promo.visit')) : null,
+        skip),
+      h('p.promo__note', null, t('promo.note')));
+
+    const layer = h('div.promo', { role: 'dialog', 'aria-modal': 'true' }, card);
+    document.addEventListener('keydown', onKey);
+    document.body.append(layer);
+    skip.focus();
+  });
 }
 
 /**

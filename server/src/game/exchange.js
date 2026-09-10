@@ -18,7 +18,6 @@ import { goodById } from '@schiffi/shared/data/goods.js';
 // offering a trade the server will refuse.
 import { TRADE_RANGE } from '@schiffi/shared/data/costs.js';
 import { addCargo, removeCargo, cargoUsage } from './characters.js';
-import { audit } from '../services/audit.js';
 
 /** An offer nobody touches expires rather than sitting open forever. */
 const OFFER_TTL_MS = 10 * 60_000;
@@ -178,7 +177,6 @@ export async function confirm({ instance, characterId, userId, payload }) {
     const result = await settle(tx, instance, current);
     const settled = await tx.get('SELECT * FROM trade_offers WHERE id = ?', [offer.id]);
     notify(instance, settled, 'tradeSettled');
-    await audit({ userId: null }, 'trade.player_settled', 'trade', String(offer.id), result, { db: tx });
     return { ...describe(settled), settled: true, ...result };
   });
 }

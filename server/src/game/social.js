@@ -8,7 +8,6 @@
  */
 import { getDatabase } from '../db/index.js';
 import { HttpError } from '../http/respond.js';
-import { audit } from '../services/audit.js';
 import { FOUNDING_FEE } from '@schiffi/shared/data/costs.js';
 
 const fail = (code, message = code) => new HttpError(400, code, message);
@@ -281,7 +280,6 @@ export async function createGuild({ instance, characterId, userId, payload }) {
     await tx.insert('guild_members', {
       guild_id: guildId, character_id: characterId, rank_key: 'founder', joined_at: Date.now(),
     });
-    await audit({ userId }, 'guild.create', 'guild', String(guildId), { name, tag }, { db: tx });
 
     return { guildId, name, tag, fee: FOUNDING_FEE, coins: Number(character.coins) - FOUNDING_FEE };
   });
@@ -392,7 +390,6 @@ export async function withdrawGuild({ characterId, userId, payload }) {
       delta: -amount, balance: Number(guild.treasury) - amount,
       reason: String(payload.reason ?? '').slice(0, 120), at: Date.now(),
     });
-    await audit({ userId }, 'guild.withdraw', 'guild', String(member.guild_id), { amount }, { db: tx });
 
     return { treasury: Number(guild.treasury) - amount, coins: Number(character.coins) + amount };
   });

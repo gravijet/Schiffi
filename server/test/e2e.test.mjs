@@ -33,6 +33,11 @@ process.env.SMTP_HOST = '';
 // The suite exercises the password vault, so it needs a key. A fixed test
 // key is fine: the database it opens is thrown away with the temp directory.
 process.env.PASSWORD_VAULT_KEY = 'a'.repeat(64);
+// Who the superadmin is, is a configured address rather than a role anybody
+// can hold - so the suite names its own first account and then tests both
+// sides of the boundary: what that account can do, and what every other
+// account (including a full administrator) is told when it tries.
+process.env.SUPERADMIN_EMAIL = 'captain@example.org';
 
 // Empty database, SQLite or PostgreSQL depending on TEST_DATABASE_URL.
 await useTestDatabase(TEST_DB);
@@ -42,9 +47,9 @@ let BASE;
 let wsPort;
 let server;
 let session = { cookie: null, token: null };
-// The owner's session, kept aside: several tests register further accounts,
-// and registering signs you in as the account you just made.
-let ownerCookie = null;
+// The superadmin's session, kept aside: several tests register further
+// accounts, and registering signs you in as the account you just made.
+let rootCookie = null;
 
 before(async () => {
   const { bootstrap } = await import('../src/index.js');
@@ -83,7 +88,15 @@ test('status endpoint reports nine locales and the full goods catalogue', async 
   assert.equal(body.goods, 1000);
 });
 
-test('registration creates the first account as owner', async () => {
+/**
+ * Registering grants nothing.
+ *
+ * The old behaviour - first account becomes the owner - is gone along with the
+ * owner role itself. What makes this account all-powerful is only that its
+ * address is the configured one, and even then it holds no role: there is no
+ * row anywhere that another administrator could read and learn from.
+ */
+test('registration grants no role; the configured address is the superadmin', async () => {
   const { status, body } = await api('/api/auth/register', {
     method: 'POST',
     body: { email: 'captain@example.org', username: 'Captain', password: 'Nordwind-Segel-42', locale: 'de' },
@@ -94,9 +107,11 @@ test('registration creates the first account as owner', async () => {
 
   const me = await api('/api/auth/me');
   assert.equal(me.status, 200);
-  assert.deepEqual(me.body.roles, ['owner']);
-  assert.ok(me.body.permissions.includes('*'));
-  ownerCookie = session.cookie;
+  assert.deepEqual(me.body.roles, [], 'the superadmin holds no role');
+  assert.equal(me.body.superadmin, true);
+  assert.ok(me.body.permissions.includes('users.view'));
+  assert.ok(!me.body.permissions.includes('*'), 'the wildcard permission no longer exists');
+  rootCookie = session.cookie;
 });
 
 test('a weak password is rejected with a translatable code', async () => {
@@ -610,8 +625,8 @@ test('the simulation is actually running', async () => {
 // returns the password when it should, and that it really refuses when it
 // cannot - rather than returning something misleading.
 
-test('a stored password can be read back by an owner, and the read is audited', async () => {
-  // The suite's first account is the owner and holds the wildcard.
+test('a stored password can be read back by the superadmin', async () => {
+  // The suite's first account holds the configured superadmin address.
   const registered = await api('/api/auth/register', {
     method: 'POST',
     body: { email: 'vault@example.org', username: 'VaultMate', password: 'Sturmflut-Anker-91', locale: 'de' },
@@ -619,23 +634,27 @@ test('a stored password can be read back by an owner, and the read is audited', 
   assert.equal(registered.status, 200, JSON.stringify(registered.body));
   const targetId = registered.body.userId;
 
-  // Registering signed us in as the new account; go back to the owner.
-  session.cookie = ownerCookie;
+  // Registering signed us in as the new account; go back to the superadmin.
+  session.cookie = rootCookie;
 
-  const revealed = await api(`/api/admin/users/${targetId}/password/reveal`, { method: 'POST' });
+  const revealed = await api(`/api/superadmin/users/${targetId}/password`, { method: 'POST' });
   assert.equal(revealed.status, 200, JSON.stringify(revealed.body));
   assert.equal(revealed.body.password, 'Sturmflut-Anker-91',
     'the vault did not return the password that was registered');
   assert.equal(revealed.body.reason, null);
 
+  // The administration's own view of the same account says nothing about any
+  // of this: an administrator must not be able to work out that a readable
+  // copy exists at all.
   const security = await api(`/api/admin/users/${targetId}/security`);
-  assert.equal(security.body.status.passwordReadable, true);
   assert.equal(security.body.status.passwordAlgorithm, 'argon2id',
     'the vault must not have replaced the hash used for authentication');
+  assert.ok(!security.text.includes('assword_vault'), 'the security view mentions the vault');
+  assert.ok(!security.text.includes('passwordReadable'), 'the security view hints a password is readable');
 
-  const audit = await api('/api/admin/audit?action=user.password_revealed');
-  assert.ok(audit.body.entries.some((e) => String(e.target_id) === String(targetId)),
-    'reading a password left no audit entry');
+  const overview = await api('/api/superadmin/overview');
+  assert.equal(overview.status, 200);
+  assert.equal(overview.body.vault.enabled, true);
 });
 
 test('the vault does not weaken the login itself', async () => {
@@ -652,20 +671,71 @@ test('the vault does not weaken the login itself', async () => {
     body: { identifier: 'VaultMate', password: 'Sturmflut-Anker-91' },
   });
   assert.equal(good.status, 200, 'the right password stopped working');
-  session.cookie = ownerCookie;
+  session.cookie = rootCookie;
 });
 
-test('an ordinary account cannot read anyone\'s password', async () => {
+/**
+ * The other half of the boundary, and the more important half.
+ *
+ * An account that is not the superadmin must not merely be refused - it must
+ * be told the address does not exist. A 403 confirms there is something there
+ * to be forbidden from, which is exactly what this installation must not
+ * admit. So: 404, for a plain player and for a full administrator alike.
+ */
+test('to everybody else the superadmin routes do not exist', async () => {
   const outsider = await api('/api/auth/register', {
     method: 'POST',
     body: { email: 'deckhand@example.org', username: 'Deckhand', password: 'Kompass-Laterne-77', locale: 'en' },
   });
   assert.equal(outsider.status, 200);
 
-  // Still signed in as Nosy, who holds no admin permission at all.
-  const attempt = await api('/api/admin/users/1/password/reveal', { method: 'POST' });
-  assert.equal(attempt.status, 403, 'a player without the permission read a password');
-  session.cookie = ownerCookie;
+  // A plain player.
+  for (const path of ['/api/superadmin/overview', '/api/superadmin/interstitials']) {
+    const attempt = await api(path);
+    assert.equal(attempt.status, 404, `${path} admitted it exists to a player`);
+  }
+  const read = await api('/api/superadmin/users/1/password', { method: 'POST' });
+  assert.equal(read.status, 404, 'a player was told the reveal endpoint exists');
+
+  // Now the same account with every permission an administrator can hold.
+  const { getDatabase } = await import('../src/db/index.js');
+  const db = getDatabase();
+  const me = await db.get('SELECT id FROM users WHERE username_norm = ?', ['deckhand']);
+  const role = await db.get('SELECT id FROM roles WHERE key = ?', ['admin']);
+  await db.run('INSERT INTO user_roles (user_id, role_id, granted_at) VALUES (?, ?, ?)',
+    [me.id, role.id, Date.now()]);
+  const { invalidateAll } = await import('../src/services/rbac.js');
+  invalidateAll();
+
+  const asAdmin = await api('/api/superadmin/overview');
+  assert.equal(asAdmin.status, 404, 'a full administrator was shown the superadmin surface');
+  const adminRead = await api('/api/superadmin/users/1/password', { method: 'POST' });
+  assert.equal(adminRead.status, 404, 'a full administrator could see the reveal endpoint');
+
+  // And nothing in the catalogue an administrator can read names it.
+  const permissions = await api('/api/admin/permissions');
+  const keys = permissions.body.permissions.map((entry) => entry.key);
+  assert.ok(!keys.includes('*'), 'the wildcard permission is still on offer');
+  assert.ok(!keys.some((key) => key.includes('reveal')), 'a reveal permission is visible to administrators');
+  assert.ok(!keys.includes('audit.view'), 'the audit permission outlived the audit log');
+
+  const roles = await api('/api/admin/roles');
+  const roleKeys = roles.body.roles.map((entry) => entry.key);
+  assert.ok(!roleKeys.includes('owner'), 'the owner role still exists');
+  assert.ok(roleKeys.includes('advertiser'), 'the advertiser role was not created');
+
+  session.cookie = rootCookie;
+});
+
+test('the audit log is gone, table and route alike', async () => {
+  const route = await api('/api/admin/audit');
+  assert.equal(route.status, 404, 'the audit route still answers');
+
+  const { getDatabase } = await import('../src/db/index.js');
+  const db = getDatabase();
+  const rows = await db.all('SELECT 1 AS x FROM audit_log LIMIT 1').then(() => 'table still there',
+    () => 'table gone');
+  assert.equal(rows, 'table gone');
 });
 
 test('a password set before the vault existed is reported as unreadable, not as an error', async () => {
@@ -675,14 +745,17 @@ test('a password set before the vault existed is reported as unreadable, not as 
   // Exactly the state of an account that predates the key.
   await db.run('UPDATE users SET password_vault = NULL, password_vault_at = NULL WHERE id = ?', [row.id]);
 
-  const revealed = await api(`/api/admin/users/${row.id}/password/reveal`, { method: 'POST' });
+  const revealed = await api(`/api/superadmin/users/${row.id}/password`, { method: 'POST' });
   assert.equal(revealed.status, 200);
   assert.equal(revealed.body.password, null);
   assert.equal(revealed.body.reason, 'notStored',
     'the console would have shown a generic failure instead of the real reason');
 
+  // The administrator's view is unchanged by any of this - it never carried
+  // the field in the first place.
   const security = await api(`/api/admin/users/${row.id}/security`);
-  assert.equal(security.body.status.passwordReadable, false);
+  assert.equal(security.status, 200);
+  assert.equal(security.body.status.passwordReadable, undefined);
 });
 
 test('changing a password refreshes what the vault holds', async () => {
@@ -700,9 +773,9 @@ test('changing a password refreshes what the vault holds', async () => {
 
   const { getDatabase } = await import('../src/db/index.js');
   const row = await getDatabase().get('SELECT id FROM users WHERE username_norm = ?', ['deckhand']);
-  session.cookie = ownerCookie;
+  session.cookie = rootCookie;
 
-  const revealed = await api(`/api/admin/users/${row.id}/password/reveal`, { method: 'POST' });
+  const revealed = await api(`/api/superadmin/users/${row.id}/password`, { method: 'POST' });
   assert.equal(revealed.body.password, 'Steuerbord-Nordlicht-08',
     'the vault still held the old password after a change');
 });
@@ -716,4 +789,164 @@ test('the vault stores ciphertext, never the password itself', async () => {
       'a password was written to the database in clear text');
     assert.match(row.password_vault, /^v1\./, 'the sealed record is not in the expected format');
   }
+});
+
+// ---------------------------------------------------------------------------
+// Advertising: the role that lets a player upload one, and the advert the
+// superadmin puts in front of the site.
+
+/** A minimal but genuine WebP container: "RIFF" + size + "WEBP" + a chunk. */
+function webp(bytes = 64) {
+  const payload = Buffer.alloc(bytes);
+  payload.write('RIFF', 0, 'ascii');
+  payload.writeUInt32LE(bytes - 8, 4);
+  payload.write('WEBP', 8, 'ascii');
+  payload.write('VP8 ', 12, 'ascii');
+  return payload;
+}
+
+test('uploading an advert needs the advertiser role, and nothing more', async () => {
+  const account = await api('/api/auth/register', {
+    method: 'POST',
+    body: { email: 'werber@example.org', username: 'Werber', password: 'Leuchtturm-Kompass-12', locale: 'de' },
+  });
+  assert.equal(account.status, 200);
+  const advertiserId = account.body.userId;
+  const advertiserCookie = session.cookie;
+
+  const advert = {
+    title: 'Segeltuch vom Hafenmeister',
+    body: 'Reissfestes Tuch, geliefert in jeden Hafen der Nordsee.',
+    targetUrl: 'https://example.com/segeltuch',
+  };
+
+  // Without the role: refused. This is a permission, not a hidden thing, so
+  // 403 is the right answer here - unlike the superadmin surface.
+  const refused = await api('/api/ads', { method: 'POST', body: advert });
+  assert.equal(refused.status, 403, 'any account could upload advertising');
+
+  // Grant it the way an administrator would.
+  session.cookie = rootCookie;
+  const roles = await api('/api/admin/roles');
+  const advertiser = roles.body.roles.find((role) => role.key === 'advertiser');
+  assert.ok(advertiser, 'the advertiser role is missing');
+  assert.deepEqual(advertiser.permissions, ['ads.submit'],
+    'the advertiser role must grant exactly one thing');
+  const granted = await api(`/api/admin/users/${advertiserId}/roles/${advertiser.id}`, { method: 'POST' });
+  assert.equal(granted.status, 200);
+
+  session.cookie = advertiserCookie;
+  const created = await api('/api/ads', { method: 'POST', body: advert });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  assert.equal(created.body.status, 'pending');
+
+  // The picture is real bytes, checked against the format's magic number.
+  const badImage = await fetch(`${BASE}/api/ads/${created.body.id}/image`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'image/webp', Cookie: session.cookie },
+    body: Buffer.from('not an image at all'),
+  });
+  assert.equal(badImage.status, 400, 'anything at all was accepted as an image');
+
+  const image = await fetch(`${BASE}/api/ads/${created.body.id}/image`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'image/webp', Cookie: session.cookie },
+    body: webp(),
+  });
+  assert.equal(image.status, 200);
+  const { image: imageUrl } = await image.json();
+  assert.match(imageUrl, /^\/media\/ads\/[0-9a-f]{20}\.webp$/);
+
+  const served = await fetch(`${BASE}${imageUrl}`);
+  assert.equal(served.status, 200);
+  assert.equal(served.headers.get('content-type'), 'image/webp');
+
+  // The role grants nothing beyond advertising.
+  const users = await api('/api/admin/users');
+  assert.equal(users.status, 403, 'the advertiser role reached the user list');
+
+  // Unapproved, so nobody sees it yet.
+  const publicBefore = await api('/api/ads');
+  assert.ok(!publicBefore.body.ads.some((ad) => ad.id === created.body.id),
+    'an unreviewed advert was served to visitors');
+
+  session.cookie = rootCookie;
+  const approved = await api(`/api/admin/ads/${created.body.id}`, {
+    method: 'POST', body: { status: 'approved', note: 'passt' },
+  });
+  assert.equal(approved.status, 200);
+
+  const publicAfter = await api('/api/ads');
+  const shown = publicAfter.body.ads.find((ad) => ad.id === created.body.id);
+  assert.ok(shown, 'an approved advert was not served');
+  assert.equal(shown.image, imageUrl);
+
+  // The advertiser sees the figures the server counted, not an estimate.
+  session.cookie = advertiserCookie;
+  const mine = await api('/api/ads/mine');
+  const own = mine.body.ads.find((ad) => ad.id === created.body.id);
+  assert.equal(own.status, 'approved');
+  assert.ok(own.impressions >= 1, 'the impression was not counted');
+  session.cookie = rootCookie;
+});
+
+test('the advert in front of the site is the superadmin\'s alone', async () => {
+  // Nothing is shown until something is switched on.
+  const empty = await api('/api/interstitial');
+  assert.equal(empty.status, 200);
+  assert.equal(empty.body.interstitial, null, 'something was shown before anything was created');
+
+  const created = await api('/api/superadmin/interstitials', {
+    method: 'POST',
+    body: { headline: 'Neu: Winterrouten', body: 'Ab sofort befahrbar.', targetUrl: 'https://example.com/winter', seconds: 3 },
+  });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+
+  const withImage = await fetch(`${BASE}/api/superadmin/interstitials/${created.body.id}/image`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'image/webp', Cookie: session.cookie },
+    body: webp(),
+  });
+  assert.equal(withImage.status, 200);
+
+  // Created is not the same as shown.
+  const stillEmpty = await api('/api/interstitial');
+  assert.equal(stillEmpty.body.interstitial, null, 'a new advert switched itself on');
+
+  const shown = await api(`/api/superadmin/interstitials/${created.body.id}`, {
+    method: 'PATCH', body: { active: true },
+  });
+  assert.equal(shown.status, 200);
+
+  const visitor = await api('/api/interstitial');
+  assert.equal(visitor.body.interstitial.headline, 'Neu: Winterrouten');
+  assert.equal(visitor.body.interstitial.seconds, 3);
+  assert.match(visitor.body.interstitial.image, /^\/media\/ads\//);
+
+  // Only ever one. Switching a second one on switches the first one off.
+  const second = await api('/api/superadmin/interstitials', {
+    method: 'POST', body: { headline: 'Zweite', seconds: 0 },
+  });
+  await api(`/api/superadmin/interstitials/${second.body.id}`, { method: 'PATCH', body: { active: true } });
+  const after = await api('/api/superadmin/interstitials');
+  assert.deepEqual(after.body.interstitials.filter((item) => item.active).map((item) => item.id),
+    [second.body.id], 'two adverts were active at once');
+
+  // A click is counted, and a click on an inactive advert is not.
+  const click = await api(`/api/interstitial/${second.body.id}/click`, { method: 'POST' });
+  assert.equal(click.status, 200);
+  const stale = await api(`/api/interstitial/${created.body.id}/click`, { method: 'POST' });
+  assert.equal(stale.status, 404, 'a click on a switched-off advert was counted');
+
+  await api(`/api/superadmin/interstitials/${second.body.id}`, { method: 'PATCH', body: { active: false } });
+  const gone = await api('/api/interstitial');
+  assert.equal(gone.body.interstitial, null);
+});
+
+test('a javascript: link is refused wherever a link is accepted', async () => {
+  const advert = await api('/api/superadmin/interstitials', {
+    method: 'POST',
+    body: { headline: 'Boes', targetUrl: 'javascript:alert(1)', seconds: 0 },
+  });
+  assert.equal(advert.status, 400, 'a javascript: URL was stored as an advert target');
 });

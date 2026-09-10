@@ -5,6 +5,12 @@
  * roles are *data-defined* (an administrator composes them at runtime).  New
  * permissions are inserted on boot; removed ones are left in place so an
  * existing role never silently loses a grant.
+ *
+ * There is no wildcard and no owner role. Both used to exist, and both were
+ * visible to anyone who could open the role editor - which is exactly what
+ * this installation must not reveal. The single superadmin is now decided by
+ * one e-mail address compared in rbac.js, holds no role, and leaves no row
+ * behind. To an administrator, this list is the whole world.
  */
 
 const p = (key, category, description) => ({ key, category, description });
@@ -18,10 +24,6 @@ export const PERMISSIONS = [
   p('users.reset_password', 'users', 'Trigger a password reset e-mail'),
   p('users.revoke_sessions', 'users', 'Revoke a user\'s active sessions'),
   p('users.security_status', 'users', 'View a user\'s security status'),
-  p('users.impersonate_never', 'users', 'Reserved: impersonation is not implemented by design'),
-  // Reads a stored password back in clear text. Held by the owner role only
-  // unless an owner deliberately grants it further; every use is audited.
-  p('users.password_reveal', 'users', 'Show a user\'s stored password in clear text'),
 
   // --- roles --------------------------------------------------------------
   p('roles.view', 'roles', 'View roles and their permissions'),
@@ -49,6 +51,9 @@ export const PERMISSIONS = [
   // --- content ------------------------------------------------------------
   p('news.view', 'content', 'View unpublished news posts'),
   p('news.publish', 'content', 'Write and publish news'),
+  // The player's side of advertising: a role holding this may upload an
+  // advert and watch what it does. It grants nothing else.
+  p('ads.submit', 'content', 'Upload own adverts and see their figures'),
   p('ads.view', 'content', 'View submitted adverts'),
   p('ads.approve', 'content', 'Approve or reject adverts'),
 
@@ -58,7 +63,6 @@ export const PERMISSIONS = [
   p('support.close', 'support', 'Close support tickets'),
 
   // --- system -------------------------------------------------------------
-  p('audit.view', 'system', 'Read the audit log'),
   p('system.status', 'system', 'View server internals and metrics'),
   p('system.maintenance', 'system', 'Put the server into maintenance mode'),
   p('system.integrations', 'system', 'View and manage external integrations'),
@@ -67,24 +71,18 @@ export const PERMISSIONS = [
 export const PERMISSION_KEYS = PERMISSIONS.map((x) => x.key);
 export const PERMISSION_SET = new Set(PERMISSION_KEYS);
 
-/** The wildcard an owner role holds; it satisfies every check. */
-export const WILDCARD = '*';
-
 export function isKnownPermission(key) {
-  return key === WILDCARD || PERMISSION_SET.has(key);
+  return PERMISSION_SET.has(key);
 }
 
 /**
- * Roles created on first boot.  `system: 1` only prevents deletion - an
- * administrator can still edit a system role's permissions, except the owner
- * role's wildcard, which the RBAC service refuses to remove.
+ * Roles created on first boot.
+ *
+ * `system: 1` only prevents deletion - an administrator can still edit a
+ * system role's permissions. None of these is privileged beyond what it
+ * lists: the administrator role is the highest thing that exists in data.
  */
 export const BOOTSTRAP_ROLES = [
-  {
-    key: 'owner', name: 'Owner', priority: 1000, system: 1,
-    description: 'Full access. Still cannot read passwords - nobody can.',
-    permissions: [WILDCARD],
-  },
   {
     key: 'admin', name: 'Administrator', priority: 800, system: 1,
     description: 'Administers users, roles, worlds and content.',
@@ -103,8 +101,13 @@ export const BOOTSTRAP_ROLES = [
       'support.view', 'support.reply', 'support.close'],
   },
   {
-    key: 'editor', name: 'Editor', priority: 300, system: 0,
+    key: 'editor', name: 'Redaktion', priority: 300, system: 0,
     description: 'Writes news and reviews adverts.',
     permissions: ['news.view', 'news.publish', 'ads.view', 'ads.approve'],
+  },
+  {
+    key: 'advertiser', name: 'Werbekunde', priority: 100, system: 0,
+    description: 'May upload adverts. Grants no access to administration.',
+    permissions: ['ads.submit'],
   },
 ];
