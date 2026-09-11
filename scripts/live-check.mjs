@@ -28,7 +28,14 @@ page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
  * one if it is there and reports that it was, rather than failing on it.
  */
 async function passFront(target) {
-  await target.waitForSelector('.promo, .lang-grid, #menu-screen', { timeout: 40000 });
+  await target.waitForSelector('.promo, .start-gate, .lang-grid, #menu-screen', { timeout: 40000 });
+  // The application deliberately opens behind a full-screen start gate so a
+  // video interstitial can use a real visitor gesture. A live check must make
+  // that same first click before it can inspect the language dialog or menu.
+  if (await target.locator('.start-gate').count()) {
+    await target.locator('.start-gate__btn').click({ timeout: 10000 });
+    await target.waitForSelector('.promo, .lang-grid, #menu-screen', { timeout: 10000 });
+  }
   if (await target.locator('.promo').count()) {
     const headline = await target.locator('.promo__headline').innerText();
     await target.locator('.promo button.primary').click({ timeout: 40000 });
@@ -51,10 +58,13 @@ await page.locator('.lang-btn', { hasText: 'Deutsch' }).first().click();
 await page.waitForSelector('.modal-backdrop', { state: 'detached', timeout: 10000 });
 
 const clicks = [];
-for (const [label, path] of [['Mehrspieler', '/worlds'], ['Ranglisten', '/leaderboard'],
-  ['Neuigkeiten', '/news'], ['Anleitung', '/manual'], ['Support', '/support'], ['Spielen', '/']]) {
+// The header actions are buttons, not anchors. Their fixed order follows the
+// public route table; using that order keeps this probe independent of the
+// currently selected language and of editorial wording changes.
+for (const [index, path] of [[1, '/worlds'], [2, '/leaderboard'],
+  [3, '/news'], [4, '/docs'], [5, '/support'], [0, '/']]) {
   const s = Date.now();
-  await page.locator('.site-nav__link', { hasText: label }).first().click();
+  await page.locator('.site-nav__link').nth(index).click();
   await page.waitForFunction((w) => location.pathname === w, path, { timeout: 8000 });
   await page.waitForSelector('.site-main h2', { timeout: 8000 });
   clicks.push(Date.now() - s);
