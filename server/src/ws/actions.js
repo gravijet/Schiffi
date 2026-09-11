@@ -67,6 +67,8 @@ const HANDLERS = {
   'guild.leave': social.leaveGuild,
   'guild.deposit': social.depositGuild,
   'guild.withdraw': social.withdrawGuild,
+  'guild.alliance.propose': social.proposeAlliance,
+  'guild.alliance.respond': social.respondAlliance,
 
   'trade.propose': exchange.propose,
   'trade.set': exchange.setOffer,
@@ -108,6 +110,7 @@ const REFRESH_AFTER = new Set([
   'explore.gather', 'combat.board', 'combat.salvage', 'ship.arm',
   'mission.accept', 'mission.complete', 'mission.abandon',
   'guild.create', 'guild.deposit', 'guild.withdraw',
+  'guild.alliance.propose', 'guild.alliance.respond',
   'trade.confirm',
   'warehouse.rent', 'warehouse.move', 'rumour.buy', 'treasure.dig',
   'market.list', 'market.buy', 'market.buyout', 'market.bid', 'market.cancel',

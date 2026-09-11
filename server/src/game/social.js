@@ -329,6 +329,87 @@ export async function leaveGuild({ characterId }) {
   });
 }
 
+/** The founder is the diplomatic authority: treaties affect every member. */
+async function founderGuild(tx, instance, characterId) {
+  const member = await tx.get('SELECT guild_id FROM guild_members WHERE character_id = ?', [characterId]);
+  if (!member) throw fail('error.validation', 'you are not in a company');
+  const guild = await tx.get('SELECT * FROM guilds WHERE id = ? AND world_id = ?', [member.guild_id, instance.id]);
+  if (!guild) throw new HttpError(404, 'error.notFound');
+  if (String(guild.founder_id) !== String(characterId)) throw new HttpError(403, 'error.forbidden');
+  return guild;
+}
+
+async function treatyForGuild(tx, guildId) {
+  return tx.get(`SELECT id FROM guild_alliances
+    WHERE (proposer_guild_id = ? OR recipient_guild_id = ?) AND status IN ('pending', 'active')`,
+  [guildId, guildId]);
+}
+
+/** Propose a bilateral treaty. A compact two-company alliance prevents unclear map ownership. */
+export async function proposeAlliance({ instance, characterId, payload }) {
+  const targetId = Math.floor(Number(payload.guildId));
+  if (!Number.isFinite(targetId) || targetId <= 0) throw fail('error.validation');
+  const db = getDatabase();
+  return db.tx(async (tx) => {
+    const guild = await founderGuild(tx, instance, characterId);
+    if (String(guild.id) === String(targetId)) throw fail('error.validation');
+    const target = await tx.get('SELECT * FROM guilds WHERE id = ? AND world_id = ?', [targetId, instance.id]);
+    if (!target) throw new HttpError(404, 'error.notFound');
+    if (await treatyForGuild(tx, guild.id) || await treatyForGuild(tx, target.id)) {
+      throw new HttpError(409, 'error.conflict', 'one of these companies already has a treaty');
+    }
+    const allianceId = await tx.insert('guild_alliances', {
+      world_id: instance.id, proposer_guild_id: guild.id, recipient_guild_id: target.id,
+      status: 'pending', created_at: Date.now(), accepted_at: null,
+    });
+    return { allianceId, targetName: target.name, status: 'pending' };
+  });
+}
+
+/** Only the receiving founder may ratify a proposal; either founder may cancel it. */
+export async function respondAlliance({ instance, characterId, payload }) {
+  const allianceId = Math.floor(Number(payload.allianceId));
+  if (!Number.isFinite(allianceId) || allianceId <= 0) throw fail('error.validation');
+  const accept = payload.accept === true;
+  const db = getDatabase();
+  return db.tx(async (tx) => {
+    const guild = await founderGuild(tx, instance, characterId);
+    const alliance = await tx.get('SELECT * FROM guild_alliances WHERE id = ? AND world_id = ?', [allianceId, instance.id]);
+    if (!alliance) throw new HttpError(404, 'error.notFound');
+    const isRecipient = String(alliance.recipient_guild_id) === String(guild.id);
+    const isParty = isRecipient || String(alliance.proposer_guild_id) === String(guild.id);
+    if (!isParty) throw new HttpError(403, 'error.forbidden');
+    if (alliance.status === 'pending' && accept && !isRecipient) throw new HttpError(403, 'error.forbidden');
+    if (alliance.status === 'pending' && accept) {
+      await tx.run("UPDATE guild_alliances SET status = 'active', accepted_at = ? WHERE id = ?", [Date.now(), alliance.id]);
+      return { allianceId: alliance.id, active: true };
+    }
+    await tx.run('DELETE FROM guild_alliances WHERE id = ?', [alliance.id]);
+    return { allianceId: alliance.id, active: false };
+  });
+}
+
+/** Maps each allied guild to the single territorial identity shared by the pair. */
+export async function activeAllianceGroups(worldId) {
+  const db = getDatabase();
+  const rows = await db.all(`SELECT a.id, a.proposer_guild_id, a.recipient_guild_id,
+      p.name AS proposer_name, p.tag AS proposer_tag, r.name AS recipient_name, r.tag AS recipient_tag
+    FROM guild_alliances a JOIN guilds p ON p.id = a.proposer_guild_id
+      JOIN guilds r ON r.id = a.recipient_guild_id
+    WHERE a.world_id = ? AND a.status = 'active'`, [worldId]);
+  const groups = new Map();
+  for (const row of rows) {
+    const group = {
+      allianceId: row.id,
+      controlId: `alliance:${row.id}`,
+      controlName: `[${row.proposer_tag}] + [${row.recipient_tag}]`,
+    };
+    groups.set(String(row.proposer_guild_id), group);
+    groups.set(String(row.recipient_guild_id), group);
+  }
+  return groups;
+}
+
 async function rankPermissions(tx, guildId, rankKey) {
   const rank = await tx.get('SELECT permissions FROM guild_ranks WHERE guild_id = ? AND key = ?',
     [guildId, rankKey]);
@@ -409,6 +490,15 @@ export async function guildFor(characterId) {
     [member.guild_id]);
   const ledger = await db.all(
     'SELECT * FROM guild_ledger WHERE guild_id = ? ORDER BY at DESC LIMIT 50', [member.guild_id]);
+  const alliances = await db.all(`SELECT a.*, p.name AS proposer_name, p.tag AS proposer_tag,
+      r.name AS recipient_name, r.tag AS recipient_tag
+    FROM guild_alliances a JOIN guilds p ON p.id = a.proposer_guild_id
+      JOIN guilds r ON r.id = a.recipient_guild_id
+    WHERE (a.proposer_guild_id = ? OR a.recipient_guild_id = ?) AND a.status IN ('pending', 'active')
+    ORDER BY a.created_at DESC`, [member.guild_id, member.guild_id]);
+  const allianceCandidates = await db.all(
+    'SELECT id, name, tag FROM guilds WHERE world_id = ? AND id <> ? ORDER BY name',
+    [guild.world_id, guild.id]);
 
   return {
     id: guild.id,
@@ -430,6 +520,17 @@ export async function guildFor(characterId) {
       at: Number(row.at), actor: row.actor_name,
       delta: Number(row.delta), balance: Number(row.balance), reason: row.reason,
     })),
+    alliances: alliances.map((row) => {
+      const incoming = String(row.recipient_guild_id) === String(guild.id);
+      return {
+        id: row.id, status: row.status, incoming,
+        partnerId: incoming ? row.proposer_guild_id : row.recipient_guild_id,
+        partnerName: incoming ? row.proposer_name : row.recipient_name,
+        partnerTag: incoming ? row.proposer_tag : row.recipient_tag,
+        createdAt: Number(row.created_at), acceptedAt: row.accepted_at ? Number(row.accepted_at) : null,
+      };
+    }),
+    allianceCandidates: allianceCandidates.map((row) => ({ id: row.id, name: row.name, tag: row.tag })),
   };
 }
 

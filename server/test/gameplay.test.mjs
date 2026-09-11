@@ -524,6 +524,47 @@ test('an armed captain can capture a nearby rival outpost, while its defence cos
   assert.equal(String(control.outposts.find((entry) => entry.id === outpostId).ownerId), String(characterId));
 });
 
+test('company founders can ratify an alliance that shares sea control and protects allied outposts', async () => {
+  const social = await import('../src/game/social.js');
+  const market = await import('../src/game/market.js');
+  const ally = await secondCaptain('Paktpartner');
+  await db.run('UPDATE characters SET coins = coins + ? WHERE id = ?', [100_000, ally.characterId]);
+  const alliedGuild = await social.createGuild({
+    instance, characterId: ally.characterId, userId: ally.userId,
+    payload: { name: 'Westwind Liga', tag: 'WWL' },
+  });
+  const ownGuild = await social.guildFor(characterId);
+
+  const offered = await social.proposeAlliance({
+    instance, characterId, payload: { guildId: alliedGuild.guildId },
+  });
+  assert.equal(offered.status, 'pending');
+  const pending = await social.guildFor(ally.characterId);
+  assert.equal(pending.alliances[0].incoming, true);
+
+  const accepted = await social.respondAlliance({
+    instance, characterId: ally.characterId, payload: { allianceId: offered.allianceId, accept: true },
+  });
+  assert.equal(accepted.active, true);
+
+  const anchorage = instance.world.anchorages.at(-1);
+  const alliedOutpostId = await db.insert('outposts', {
+    world_id: instance.id, owner_id: ally.characterId, guild_id: alliedGuild.guildId,
+    island_id: anchorage.islandId, name: 'Westwind-Wacht', x: anchorage.x, y: anchorage.y, created_at: Date.now(),
+  });
+  const control = await market.seaControlFor(instance);
+  const ours = control.outposts.find((entry) => String(entry.guildId) === String(ownGuild.id));
+  const theirs = control.outposts.find((entry) => entry.id === alliedOutpostId);
+  assert.ok(ours?.allianceId, 'our alliance did not become visible on the map');
+  assert.equal(ours.controlId, theirs.controlId, 'allies did not share a territorial score');
+
+  await moveTo(anchorage.x, anchorage.y);
+  await assert.rejects(
+    () => market.captureOutpost({ instance, characterId, userId, payload: { outpostId: alliedOutpostId } }),
+    (error) => error.status === 409,
+  );
+});
+
 test('a player trade settles both halves or neither', async () => {
   const exchange = await import('../src/game/exchange.js');
   const { addCargo } = await import('../src/game/characters.js');

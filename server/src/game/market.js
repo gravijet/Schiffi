@@ -21,6 +21,7 @@ import {
 import {
   OUTPOST_CAPTURE_RANGE, OUTPOST_CAPTURE_COOLDOWN_MS, outpostCaptureRequirements,
 } from '@schiffi/shared/campaign.js';
+import { activeAllianceGroups } from './social.js';
 
 const fail = (code, message = code) => new HttpError(400, code, message);
 
@@ -652,6 +653,15 @@ export async function captureOutpost({ instance, characterId, userId, payload, g
     }
 
     const guild = await tx.get('SELECT guild_id FROM guild_members WHERE character_id = ?', [characterId]);
+    if (guild?.guild_id && String(guild.guild_id) === String(outpost.guild_id)) {
+      throw new HttpError(409, 'error.conflict', 'company outposts cannot be captured');
+    }
+    if (guild?.guild_id && outpost.guild_id) {
+      const treaty = await tx.get(`SELECT id FROM guild_alliances WHERE world_id = ? AND status = 'active'
+        AND ((proposer_guild_id = ? AND recipient_guild_id = ?) OR (proposer_guild_id = ? AND recipient_guild_id = ?))`,
+      [instance.id, guild.guild_id, outpost.guild_id, outpost.guild_id, guild.guild_id]);
+      if (treaty) throw new HttpError(409, 'error.conflict', 'allied outposts cannot be captured');
+    }
     await tx.run('UPDATE ships SET ammunition = ammunition - ? WHERE id = ?',
       [requirements.ammunition, ship.id]);
     await tx.run('UPDATE outposts SET owner_id = ?, guild_id = ?, last_captured_at = ? WHERE id = ?',
@@ -672,6 +682,7 @@ export async function captureOutpost({ instance, characterId, userId, payload, g
 
 export async function outpostsFor(worldId, characterId = null) {
   const db = getDatabase();
+  const allianceGroups = await activeAllianceGroups(worldId);
   const rows = characterId
     ? await db.all(`SELECT o.*, c.name AS owner_name, g.name AS guild_name, g.tag AS guild_tag FROM outposts o
       JOIN characters c ON c.id = o.owner_id LEFT JOIN guilds g ON g.id = o.guild_id
@@ -683,6 +694,7 @@ export async function outpostsFor(worldId, characterId = null) {
   const out = [];
   for (const row of rows) {
     const buildings = await db.all('SELECT kind, level FROM outpost_buildings WHERE outpost_id = ?', [row.id]);
+    const alliance = row.guild_id ? allianceGroups.get(String(row.guild_id)) : null;
     out.push({
       id: row.id, name: row.name, islandId: Number(row.island_id),
       x: Number(row.x), y: Number(row.y), ownerId: row.owner_id, guildId: row.guild_id,
@@ -690,8 +702,9 @@ export async function outpostsFor(worldId, characterId = null) {
       // A trading company is the game's alliance: its members hold the same
       // colour and contribute to one territorial score, while solo captains
       // still get their own independent claim.
-      controlId: row.guild_id ? `guild:${row.guild_id}` : `captain:${row.owner_id}`,
-      controlName: row.guild_name ?? row.owner_name,
+      controlId: alliance?.controlId ?? (row.guild_id ? `guild:${row.guild_id}` : `captain:${row.owner_id}`),
+      controlName: alliance?.controlName ?? row.guild_name ?? row.owner_name,
+      allianceId: alliance?.allianceId ?? null,
       buildings: buildings.map((building) => ({ kind: building.kind, level: Number(building.level) })),
       createdAt: Number(row.created_at),
       capturedAt: row.last_captured_at ? Number(row.last_captured_at) : null,

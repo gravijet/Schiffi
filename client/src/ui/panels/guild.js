@@ -82,10 +82,12 @@ function memberView(ctx, guild, refresh) {
 
   const rank = guild.ranks.find((entry) => entry.key === guild.yourRank);
   const may = (permission) => Boolean(rank?.permissions.includes(permission));
+  const isFounder = guild.yourRank === 'founder';
 
   const header = tabs([
     { key: 'members', label: t('guild.members') },
     { key: 'treasury', label: t('guild.treasury') },
+    { key: 'diplomacy', label: t('guild.diplomacy') },
     { key: 'log', label: t('guild.auditLog') },
   ], tab, (key) => { tab = key; renderPane(); });
 
@@ -141,6 +143,8 @@ function memberView(ctx, guild, refresh) {
             onClick: () => transferDialog('guild.withdraw'),
           }, t('guild.withdraw'))),
         may('deposit') ? null : h('p.small.muted', null, t('guild.noPermission')));
+    } else if (tab === 'diplomacy') {
+      diplomacyPane(pane, ctx, guild, isFounder, refresh);
     } else if (!guild.ledger.length) {
       pane.append(h('p.small.muted', null, t('guild.emptyLog')));
     } else {
@@ -181,6 +185,56 @@ function memberView(ctx, guild, refresh) {
 
   renderPane();
   return root;
+}
+
+/** Treaty controls deliberately live with the company roster: diplomacy changes all members' territory. */
+function diplomacyPane(pane, ctx, guild, isFounder, refresh) {
+  const treaties = guild.alliances ?? [];
+  const current = treaties.find((entry) => entry.status === 'active');
+  const incoming = treaties.find((entry) => entry.status === 'pending' && entry.incoming);
+  const outgoing = treaties.find((entry) => entry.status === 'pending' && !entry.incoming);
+  const action = async (name, payload, success) => {
+    try {
+      await ctx.socket.action(name, payload);
+      toast(t(success), 'good');
+      refresh();
+    } catch (error) { toast(t(error.code ?? 'error.generic'), 'bad'); }
+  };
+
+  pane.append(h('p.small.muted', null, t('guild.diplomacyHint')));
+  if (current) {
+    pane.append(h('div.card', null,
+      h('div.card__title', null, `${t('guild.allianceActive')} · [${current.partnerTag}] ${current.partnerName}`),
+      h('div.small.muted', null, t('guild.allianceSharedControl')),
+      isFounder ? h('button.ghost.danger', {
+        onClick: () => action('guild.alliance.respond', { allianceId: current.id, accept: false }, 'guild.allianceEnded'),
+      }, t('guild.endAlliance')) : null));
+  } else if (incoming) {
+    pane.append(h('div.card', null,
+      h('div.card__title', null, `[${incoming.partnerTag}] ${incoming.partnerName}`),
+      h('div.small.muted', null, t('guild.allianceIncoming')),
+      isFounder ? h('div.row', null,
+        h('button.primary', { onClick: () => action('guild.alliance.respond', { allianceId: incoming.id, accept: true }, 'guild.allianceAccepted') }, t('guild.acceptAlliance')),
+        h('button.ghost.danger', { onClick: () => action('guild.alliance.respond', { allianceId: incoming.id, accept: false }, 'guild.allianceDeclined') }, t('guild.declineAlliance'))) : null));
+  } else if (outgoing) {
+    pane.append(h('div.card', null,
+      h('div.card__title', null, `[${outgoing.partnerTag}] ${outgoing.partnerName}`),
+      h('div.small.muted', null, t('guild.alliancePending')),
+      isFounder ? h('button.ghost.danger', { onClick: () => action('guild.alliance.respond', { allianceId: outgoing.id, accept: false }, 'guild.allianceEnded') }, t('guild.cancelAlliance')) : null));
+  } else {
+    pane.append(h('div.card__title', null, t('guild.proposeAlliance')));
+    const candidates = guild.allianceCandidates ?? [];
+    if (!candidates.length) pane.append(h('p.small.muted', null, t('guild.noAllianceCandidates')));
+    for (const candidate of candidates) {
+      pane.append(h('div.row.row--between', null,
+        h('div', null, `[${candidate.tag}] ${candidate.name}`),
+        h('button.ghost', {
+          disabled: !isFounder,
+          onClick: () => action('guild.alliance.propose', { guildId: candidate.id }, 'guild.allianceProposed'),
+        }, t('guild.proposeAlliance'))));
+    }
+  }
+  if (!isFounder) pane.append(h('p.small.muted', null, t('guild.diplomacyFounderOnly')));
 }
 
 function createDialog(ctx, refresh) {

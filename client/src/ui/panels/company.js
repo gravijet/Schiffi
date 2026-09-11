@@ -72,8 +72,11 @@ function controlCard(control, ctx, refresh) {
   const rows = (control.rankings ?? []).slice(0, 5);
   const ownId = String(ctx.character?.id ?? '');
   const self = ctx.socket?.selfPosition?.();
+  const ownControlIds = new Set((control.outposts ?? [])
+    .filter((outpost) => String(outpost.ownerId) === ownId)
+    .map((outpost) => outpost.controlId));
   const rivals = (control.outposts ?? [])
-    .filter((outpost) => String(outpost.ownerId) !== ownId)
+    .filter((outpost) => String(outpost.ownerId) !== ownId && !ownControlIds.has(outpost.controlId))
     .sort((a, b) => distanceTo(self, a) - distanceTo(self, b))
     .slice(0, 3);
   return h('div.card', null,

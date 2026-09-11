@@ -51,6 +51,7 @@ export const ACTIONS = [
   'bank.deposit', 'bank.withdraw', 'bank.loan', 'bank.repay',
   'market.list', 'market.bid', 'market.buyout', 'market.cancel', 'market.buy',
   'guild.create', 'guild.join', 'guild.leave', 'guild.deposit', 'guild.withdraw',
+  'guild.alliance.propose', 'guild.alliance.respond',
   'convoy.create', 'convoy.join', 'convoy.leave', 'convoy.invite',
   'trade.propose', 'trade.set', 'trade.confirm', 'trade.cancel',
   'warehouse.rent', 'warehouse.move', 'rumour.buy', 'treasure.dig',
