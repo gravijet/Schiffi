@@ -42,8 +42,12 @@ export function companyView(ctx) {
         if (!routes.length) { pane.append(h('p.small.muted', null, t('company.noRoutes'))); return; }
         for (const route of routes) pane.append(routeCard(ctx, route, refresh));
       } else {
-        const outposts = await api.outposts(ctx.character.worldId, ctx.character.id);
+        const [outposts, control] = await Promise.all([
+          api.outposts(ctx.character.worldId, ctx.character.id),
+          api.seaControl(ctx.character.worldId),
+        ]);
         clear(pane);
+        pane.append(controlCard(control));
         pane.append(h('div.row', null,
           h('button.primary', { onClick: () => outpostDialog(ctx, refresh) },
             `${t('company.buildOutpost')} · ${tc(OUTPOST_COST)}`)));
@@ -59,6 +63,24 @@ export function companyView(ctx) {
 
   refresh();
   return root;
+}
+
+/** The public race is deliberately shown beside the build action, not hidden in a menu. */
+function controlCard(control) {
+  const objective = control.objective ?? {};
+  const rows = (control.rankings ?? []).slice(0, 5);
+  return h('div.card', null,
+    h('div.card__title', null, t('company.seaControl')),
+    h('div.small.muted', null, t('company.controlTarget', { percent: objective.targetPercent ?? 40 })),
+    h('div.small.muted', null, t('company.controlClaimed', {
+      claimed: objective.claimedIslands ?? 0, total: objective.totalIslands ?? 0,
+    })),
+    rows.length
+      ? h('table', null, h('tbody', null, ...rows.map((entry) => h('tr', null,
+        h('td.mono', null, `#${entry.rank}`),
+        h('td', null, entry.name),
+        h('td.right.mono', null, `${entry.share}%`)))))
+      : h('p.small.muted', null, t('company.noOutposts')));
 }
 
 export function routeCard(ctx, route, refresh) {

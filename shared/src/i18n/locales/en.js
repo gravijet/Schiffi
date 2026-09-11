@@ -403,6 +403,9 @@ export default {
     outpostBuilt: 'Outpost established.',
     buildingBuilt: 'Building erected.',
     buildingLevel: 'Level {level}',
+    seaControl: 'Sea control',
+    controlTarget: '{percent}% dominance target',
+    controlClaimed: '{claimed} of {total} islands claimed',
     tooCloseToPort: 'Too close to an existing port.',
   },
   settings: {

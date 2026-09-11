@@ -605,6 +605,9 @@ export default {
     outpostBuilt: 'Außenposten errichtet.',
     buildingBuilt: 'Gebäude errichtet.',
     buildingLevel: 'Stufe {level}',
+    seaControl: 'Seehoheit',
+    controlTarget: '{percent}% Dominanzziel',
+    controlClaimed: '{claimed} von {total} Inseln beansprucht',
     tooCloseToPort: 'Zu nah an einem bestehenden Hafen.',
   },
   settings: {

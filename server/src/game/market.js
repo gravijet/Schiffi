@@ -602,8 +602,10 @@ export async function buildBuilding({ characterId, userId, payload }) {
 export async function outpostsFor(worldId, characterId = null) {
   const db = getDatabase();
   const rows = characterId
-    ? await db.all('SELECT * FROM outposts WHERE world_id = ? AND owner_id = ?', [worldId, characterId])
-    : await db.all('SELECT * FROM outposts WHERE world_id = ?', [worldId]);
+    ? await db.all(`SELECT o.*, c.name AS owner_name FROM outposts o
+      JOIN characters c ON c.id = o.owner_id WHERE o.world_id = ? AND o.owner_id = ?`, [worldId, characterId])
+    : await db.all(`SELECT o.*, c.name AS owner_name FROM outposts o
+      JOIN characters c ON c.id = o.owner_id WHERE o.world_id = ?`, [worldId]);
 
   const out = [];
   for (const row of rows) {
@@ -611,11 +613,52 @@ export async function outpostsFor(worldId, characterId = null) {
     out.push({
       id: row.id, name: row.name, islandId: Number(row.island_id),
       x: Number(row.x), y: Number(row.y), ownerId: row.owner_id, guildId: row.guild_id,
+      ownerName: row.owner_name,
       buildings: buildings.map((building) => ({ kind: building.kind, level: Number(building.level) })),
       createdAt: Number(row.created_at),
     });
   }
   return out;
+}
+
+/**
+ * The OpenFront-style strategic layer for a sea world. An island with an
+ * outpost is controlled; development increases the reach of its sea zone,
+ * but never the number of islands claimed. That keeps the public race legible
+ * and makes exploration, settlement and defence meaningful choices.
+ */
+export async function seaControlFor(instance) {
+  const outposts = await outpostsFor(instance.id);
+  const byOwner = new Map();
+  for (const outpost of outposts) {
+    const development = outpost.buildings.reduce((sum, building) => sum + building.level, 0);
+    const strength = 1 + Math.min(1.5, development * 0.12);
+    outpost.strength = Math.round(strength * 100) / 100;
+    outpost.radius = Math.round(900 + strength * 520);
+    let owner = byOwner.get(String(outpost.ownerId));
+    if (!owner) {
+      owner = { characterId: outpost.ownerId, name: outpost.ownerName, islands: 0, strength: 0 };
+      byOwner.set(String(outpost.ownerId), owner);
+    }
+    owner.islands++;
+    owner.strength += strength;
+  }
+
+  const totalIslands = Math.max(1, instance.world.islands.length);
+  const rankings = [...byOwner.values()]
+    .map((owner) => ({
+      ...owner,
+      strength: Math.round(owner.strength * 100) / 100,
+      share: Math.round((owner.islands / totalIslands) * 1000) / 10,
+    }))
+    .sort((a, b) => b.islands - a.islands || b.strength - a.strength || String(a.name).localeCompare(String(b.name)))
+    .map((owner, index) => ({ ...owner, rank: index + 1 }));
+
+  return {
+    objective: { targetPercent: 40, totalIslands, claimedIslands: outposts.length },
+    rankings,
+    outposts,
+  };
 }
 
 export { OUTPOST_COST, BUILDING_COST, COMMISSION };

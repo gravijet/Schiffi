@@ -56,6 +56,7 @@ export class Renderer {
     this.storms = [];
     this.wrecks = [];
     this.routes = [];
+    this.seaControl = null;
     this.self = null;
     this.destination = null;
     this.path = null;
@@ -109,6 +110,11 @@ export class Renderer {
 
   /** Own company's trade routes, as reported by the routes API - not a live entity feed. */
   setRoutes(routes) { this.routes = routes ?? []; }
+
+  /** Public island-control state. It is a slow strategic feed, not a snapshot. */
+  setSeaControl(control, selfCharacterId = null) {
+    this.seaControl = control ? { ...control, selfCharacterId: String(selfCharacterId ?? '') } : null;
+  }
 
   setFog(bits) {
     this.fogBits = bits;
@@ -221,6 +227,7 @@ export class Renderer {
     this.drawTerrain(ctx, g);
     if (g.waves > 0) this.drawWaves(ctx, g);
     this.drawRegions(ctx, g);
+    this.drawSeaControl(ctx, g);
     this.drawPorts(ctx, g);
     this.drawRoutePaths(ctx, g);
     this.drawStorms(ctx, g, dt);
@@ -308,6 +315,48 @@ export class Renderer {
       if (region.x < bounds.x0 || region.x > bounds.x1 || region.y < bounds.y0 || region.y > bounds.y1) continue;
       const p = this.worldToScreen(region.x, region.y);
       ctx.fillText(region.name, p.x, p.y);
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Claim circles are deliberately transparent and drawn beneath ports: they
+   * communicate the strategic picture at a glance without turning the sea
+   * into a tiled board. Outpost diamonds stay visible when the circle itself
+   * is too large to fit on screen.
+   */
+  drawSeaControl(ctx, g) {
+    const control = this.seaControl;
+    if (!control?.outposts?.length || g.mapDetail < 0.25) return;
+    const bounds = this.viewBounds(2600);
+    const zoom = this.camera.zoom;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = `${clamp(9 + zoom * 12, 9, 14)}px ui-sans-serif, system-ui`;
+    for (const outpost of control.outposts) {
+      if (outpost.x < bounds.x0 || outpost.x > bounds.x1 || outpost.y < bounds.y0 || outpost.y > bounds.y1) continue;
+      const own = String(outpost.ownerId) === control.selfCharacterId;
+      const hue = stableHue(outpost.ownerId);
+      const p = this.worldToScreen(outpost.x, outpost.y);
+      const radius = Math.max(12, Number(outpost.radius ?? 1200) * zoom);
+      ctx.fillStyle = `hsla(${hue}, 72%, ${own ? 58 : 48}%, ${own ? 0.11 : 0.075})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, radius, 0, TAU); ctx.fill();
+      ctx.strokeStyle = `hsla(${hue}, 82%, ${own ? 72 : 62}%, ${own ? 0.78 : 0.52})`;
+      ctx.lineWidth = own ? 1.6 : 1;
+      ctx.setLineDash(own ? [] : [5, 5]);
+      ctx.beginPath(); ctx.arc(p.x, p.y, radius, 0, TAU); ctx.stroke();
+      ctx.setLineDash([]);
+
+      const size = clamp(4 + zoom * 8, 4, 10);
+      ctx.fillStyle = `hsl(${hue}, 76%, ${own ? 68 : 58}%)`;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y - size); ctx.lineTo(p.x + size, p.y);
+      ctx.lineTo(p.x, p.y + size); ctx.lineTo(p.x - size, p.y); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = '#07131d'; ctx.lineWidth = 1; ctx.stroke();
+      if (zoom > 0.24) {
+        ctx.fillStyle = 'rgba(240, 246, 244, 0.9)';
+        ctx.fillText(outpost.name, p.x, p.y - size - 4);
+      }
     }
     ctx.restore();
   }
@@ -941,6 +990,16 @@ function darken(hex, amount) {
   const g = Math.round(((n >> 8) & 255) * scale);
   const b = Math.round((n & 255) * scale);
   return `rgb(${r}, ${g}, ${b})`;
+}
+
+/** A stable, readable ownership colour without storing presentation in the DB. */
+function stableHue(value) {
+  let hash = 2166136261;
+  for (const char of String(value)) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return Math.abs(hash >>> 0) % 360;
 }
 
 function colourFor(entity) {

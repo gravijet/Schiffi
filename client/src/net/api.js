@@ -233,6 +233,7 @@ export const api = {
   routes: (characterId) => request(`/api/characters/${characterId}/routes`),
   outposts: (worldId, characterId) =>
     request(`/api/worlds/${worldId}/outposts${characterId ? `?characterId=${characterId}` : ''}`),
+  seaControl: (worldId) => request(`/api/worlds/${worldId}/control`),
   insurance: (characterId) => request(`/api/characters/${characterId}/insurance`),
   report: (data) => request('/api/reports', { method: 'POST', body: data }),
 

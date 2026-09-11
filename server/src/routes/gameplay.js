@@ -10,7 +10,7 @@ import { boardFor, activeMissions } from '../game/missions.js';
 import { album, pendingNames, moderateName } from '../game/exploration.js';
 import { listBounties } from '../game/combat.js';
 import { listFriends, guildFor, listGuilds, convoyFor } from '../game/social.js';
-import { listMarket, routesFor, outpostsFor, premiumFor } from '../game/market.js';
+import { listMarket, routesFor, outpostsFor, premiumFor, seaControlFor } from '../game/market.js';
 import { offersFor } from '../game/exchange.js';
 import {
   warehousesFor, rumoursFor, chartsFor, relationsFor,
@@ -191,6 +191,14 @@ export function registerGameplayRoutes(router, { gateway }) {
   router.get('/api/worlds/:worldId/outposts', async (ctx) => ({
     outposts: await outpostsFor(ctx.params.worldId, ctx.query.characterId ?? null),
   }), { auth: false });
+
+  // Public strategic state: the map can draw ownership without exposing any
+  // private character data, and a spectator can see who is leading the sea
+  // control race before choosing a world.
+  router.get('/api/worlds/:worldId/control', async (ctx) => {
+    const instance = getLoadedWorld(ctx.params.worldId) ?? await loadWorld(ctx.params.worldId);
+    return seaControlFor(instance);
+  }, { auth: false });
 
   router.get('/api/characters/:id/insurance', async (ctx) => {
     await assertOwnership(ctx, ctx.params.id);

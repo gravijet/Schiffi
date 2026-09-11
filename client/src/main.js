@@ -291,6 +291,8 @@ async function startGame(character) {
   state.game.refreshPort();
   refreshRoutes();
   state.routesInterval = setInterval(refreshRoutes, 12000);
+  refreshSeaControl();
+  state.controlInterval = setInterval(refreshSeaControl, 20000);
 
   state.input = new InputManager({
     settings, position: () => socket.selfPosition(), terrain: state.terrain,
@@ -314,6 +316,7 @@ function stopGame() {
   state.running = false;
   socket.close();
   clearInterval(state.routesInterval);
+  clearInterval(state.controlInterval);
   state.game?.unmount();
   state.input?.destroy();
   state.renderer?.destroy();
@@ -330,6 +333,15 @@ async function refreshRoutes() {
     const { routes } = await api.routes(state.character.id);
     state.renderer?.setRoutes(routes);
   } catch { /* keep the last known set; the next poll tries again */ }
+}
+
+/** Island ownership changes slowly, so a compact public poll is enough. */
+async function refreshSeaControl() {
+  if (!state.character) return;
+  try {
+    const control = await api.seaControl(state.character.worldId);
+    state.renderer?.setSeaControl(control, state.character.id);
+  } catch { /* retain the last strategic picture until the next poll */ }
 }
 
 // ---------------------------------------------------------------------------
