@@ -14,6 +14,7 @@ import { SHIP_CLASSES } from '@schiffi/shared/data/ships.js';
 import {
   OUTPOST_COST, BUILDING_COST, ROUTE_SHIP_COST_MULTIPLIER, buildingCost,
 } from '@schiffi/shared/data/costs.js';
+import { outpostCaptureRequirements } from '@schiffi/shared/campaign.js';
 import { currentLocale } from '../../state/i18n.js';
 
 const routeShipCost = (cls) => Math.round(cls.price * ROUTE_SHIP_COST_MULTIPLIER);
@@ -47,7 +48,7 @@ export function companyView(ctx) {
           api.seaControl(ctx.character.worldId),
         ]);
         clear(pane);
-        pane.append(controlCard(control));
+        pane.append(controlCard(control, ctx, refresh));
         pane.append(h('div.row', null,
           h('button.primary', { onClick: () => outpostDialog(ctx, refresh) },
             `${t('company.buildOutpost')} · ${tc(OUTPOST_COST)}`)));
@@ -66,9 +67,15 @@ export function companyView(ctx) {
 }
 
 /** The public race is deliberately shown beside the build action, not hidden in a menu. */
-function controlCard(control) {
+function controlCard(control, ctx, refresh) {
   const objective = control.objective ?? {};
   const rows = (control.rankings ?? []).slice(0, 5);
+  const ownId = String(ctx.character?.id ?? '');
+  const self = ctx.socket?.selfPosition?.();
+  const rivals = (control.outposts ?? [])
+    .filter((outpost) => String(outpost.ownerId) !== ownId)
+    .sort((a, b) => distanceTo(self, a) - distanceTo(self, b))
+    .slice(0, 3);
   return h('div.card', null,
     h('div.card__title', null, t('company.seaControl')),
     h('div.small.muted', null, t('company.controlTarget', { percent: objective.targetPercent ?? 40 })),
@@ -80,7 +87,50 @@ function controlCard(control) {
         h('td.mono', null, `#${entry.rank}`),
         h('td', null, entry.name),
         h('td.right.mono', null, `${entry.share}%`)))))
-      : h('p.small.muted', null, t('company.noOutposts')));
+      : h('p.small.muted', null, t('company.noOutposts')),
+    rivals.length
+      ? h('div.stack', { style: { marginTop: '10px' } },
+        h('div.small', null, t('company.contestedIslands')),
+        ...rivals.map((outpost) => rivalOutpostCard(ctx, outpost, refresh)))
+      : null);
+}
+
+function distanceTo(from, outpost) {
+  if (!from) return 0;
+  return Math.hypot(Number(from.x) - outpost.x, Number(from.y) - outpost.y);
+}
+
+/** The public campaign feed gives captains a concrete objective, not just a score. */
+function rivalOutpostCard(ctx, outpost, refresh) {
+  const defence = outpost.buildings
+    .filter((building) => building.kind === 'defence')
+    .reduce((sum, building) => sum + building.level, 0);
+  const required = outpostCaptureRequirements(defence);
+  const position = ctx.socket?.selfPosition?.();
+  const range = position ? Math.round(distanceTo(position, outpost)) : null;
+
+  return h('div.row.row--between', { style: { gap: '8px' } },
+    h('div.grow', null,
+      h('div', null, `${outpost.name} · ${outpost.controlName ?? outpost.ownerName ?? t('common.unknown')}`),
+      h('div.small.muted', null, `${t('company.defenceLevel', { level: defence })} · ` +
+        t('company.captureRequirements', { cannons: required.cannons, ammunition: required.ammunition }) +
+        (range === null ? '' : ` · ${t('company.distance', { distance: range })}`))),
+    h('button.ghost.danger', {
+      onClick: async () => {
+        const accepted = await confirmDialog({
+          title: t('company.captureOutpost'),
+          message: t('company.captureConfirm', { name: outpost.name }),
+          confirmLabel: t('company.captureOutpost'), danger: true,
+        });
+        if (!accepted) return;
+        try {
+          await ctx.socket.action('outpost.capture', { outpostId: outpost.id });
+          toast(t('company.outpostCaptured', { name: outpost.name }), 'good');
+          ctx.refreshCharacter?.();
+          refresh();
+        } catch (error) { toast(t(error.code ?? 'error.generic'), 'bad'); }
+      },
+    }, t('company.captureOutpost')));
 }
 
 export function routeCard(ctx, route, refresh) {

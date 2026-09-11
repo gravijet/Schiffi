@@ -489,6 +489,41 @@ async function secondCaptain(name = 'Gegenpart') {
   return { characterId: id, userId: registered.userId, shipId: character.ship.id };
 }
 
+test('an armed captain can capture a nearby rival outpost, while its defence costs ammunition', async () => {
+  const market = await import('../src/game/market.js');
+  const rival = await secondCaptain('Inselwacht');
+  const anchorage = instance.world.anchorages.find((entry) => entry.islandId !== instance.world.anchorages[0].islandId)
+    ?? instance.world.anchorages[0];
+  const player = instance.players.get(`p${characterId}`);
+
+  // The combat fixture equips this captain, but spell out the campaign
+  // precondition here so this test does not depend on a particular test run.
+  await db.run('UPDATE ships SET cannons = ?, ammunition = ? WHERE id = ?', [4, 30, player.shipId]);
+  await moveTo(anchorage.x, anchorage.y);
+  const outpostId = await db.insert('outposts', {
+    world_id: instance.id, owner_id: rival.characterId, guild_id: null, island_id: anchorage.islandId,
+    name: 'Wacht am Riff', x: anchorage.x, y: anchorage.y, created_at: Date.now(),
+  });
+  await db.insert('outpost_buildings', {
+    outpost_id: outpostId, kind: 'defence', level: 1, built_at: Date.now(),
+  });
+
+  const captured = await market.captureOutpost({
+    instance, characterId, userId, payload: { outpostId },
+  });
+  assert.equal(captured.outpostId, outpostId);
+  assert.deepEqual(captured.requirements, { defence: 1, cannons: 2, ammunition: 4 });
+
+  const outpost = await db.get('SELECT owner_id, guild_id FROM outposts WHERE id = ?', [outpostId]);
+  assert.equal(String(outpost.owner_id), String(characterId));
+  const ship = await db.get('SELECT ammunition FROM ships WHERE id = ?', [player.shipId]);
+  assert.equal(Number(ship.ammunition), 26, 'the landing did not consume its required ammunition');
+
+  // The public state immediately attributes the island to the new owner.
+  const control = await market.seaControlFor(instance);
+  assert.equal(String(control.outposts.find((entry) => entry.id === outpostId).ownerId), String(characterId));
+});
+
 test('a player trade settles both halves or neither', async () => {
   const exchange = await import('../src/game/exchange.js');
   const { addCargo } = await import('../src/game/characters.js');

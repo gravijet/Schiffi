@@ -608,6 +608,13 @@ export default {
     seaControl: 'Seehoheit',
     controlTarget: '{percent}% Dominanzziel',
     controlClaimed: '{claimed} von {total} Inseln beansprucht',
+    contestedIslands: 'Umkämpfte Inseln',
+    defenceLevel: 'Verteidigung Stufe {level}',
+    captureRequirements: '{cannons} Kanonen · {ammunition} Schuss',
+    distance: '{distance} entfernt',
+    captureOutpost: 'Außenposten übernehmen',
+    captureConfirm: '{name} wirklich angreifen? Bewaffnung und Munition werden beim Landungsangriff verbraucht.',
+    outpostCaptured: '{name} übernommen.',
     tooCloseToPort: 'Zu nah an einem bestehenden Hafen.',
   },
   settings: {

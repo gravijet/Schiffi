@@ -18,6 +18,9 @@ import {
   COMMISSION, MIN_AUCTION_MS, MAX_AUCTION_MS, OUTPOST_COST, BUILDING_COST,
   ROUTE_SHIP_COST_MULTIPLIER, buildingCost,
 } from '@schiffi/shared/data/costs.js';
+import {
+  OUTPOST_CAPTURE_RANGE, OUTPOST_CAPTURE_COOLDOWN_MS, outpostCaptureRequirements,
+} from '@schiffi/shared/campaign.js';
 
 const fail = (code, message = code) => new HttpError(400, code, message);
 
@@ -599,13 +602,83 @@ export async function buildBuilding({ characterId, userId, payload }) {
   });
 }
 
+/**
+ * Take a rival outpost by sailing to it with a properly armed ship.
+ *
+ * This is intentionally a single authoritative action rather than client
+ * side "territory painting": position comes from the live simulation, ship
+ * armament comes from the database, and the ownership update is atomic. A
+ * short lock after each takeover stops two captains from flickering a claim
+ * back and forth every click while still leaving it contestable.
+ */
+export async function captureOutpost({ instance, characterId, userId, payload, gateway }) {
+  const outpostId = Math.floor(Number(payload.outpostId));
+  if (!Number.isFinite(outpostId) || outpostId <= 0) throw fail('error.validation');
+
+  const player = instance?.players?.get(`p${characterId}`);
+  if (!player || player.docked) throw fail('error.notInPort', 'take an outpost from the water');
+
+  const db = getDatabase();
+  const result = await db.tx(async (tx) => {
+    const outpost = await tx.get(`SELECT o.*, c.name AS owner_name FROM outposts o
+      LEFT JOIN characters c ON c.id = o.owner_id WHERE o.id = ? AND o.world_id = ?`,
+    [outpostId, instance.id]);
+    if (!outpost) throw new HttpError(404, 'error.notFound');
+    if (String(outpost.owner_id) === String(characterId)) throw new HttpError(409, 'error.conflict');
+    if (dist(player.x, player.y, Number(outpost.x), Number(outpost.y)) > OUTPOST_CAPTURE_RANGE) {
+      throw fail('error.tooFar');
+    }
+
+    const character = await tx.get('SELECT * FROM characters WHERE id = ?', [characterId]);
+    if (!character) throw new HttpError(404, 'error.notFound');
+    if (userId && String(character.user_id) !== String(userId)) throw new HttpError(403, 'error.forbidden');
+
+    const now = Date.now();
+    if (outpost.last_captured_at && now - Number(outpost.last_captured_at) < OUTPOST_CAPTURE_COOLDOWN_MS) {
+      throw new HttpError(409, 'error.conflict', 'this outpost is regrouping after an assault');
+    }
+
+    const buildings = await tx.all('SELECT kind, level FROM outpost_buildings WHERE outpost_id = ?', [outpost.id]);
+    const defenceLevel = buildings
+      .filter((building) => building.kind === 'defence')
+      .reduce((sum, building) => sum + Number(building.level), 0);
+    const requirements = outpostCaptureRequirements(defenceLevel);
+    const ship = await tx.get('SELECT * FROM ships WHERE id = ?', [character.active_ship_id]);
+    if (!ship || Number(ship.cannons) < requirements.cannons) {
+      throw fail('error.validation', 'not enough cannons for this outpost');
+    }
+    if (Number(ship.ammunition) < requirements.ammunition) {
+      throw fail('combat.ammunition', 'not enough ammunition for this assault');
+    }
+
+    const guild = await tx.get('SELECT guild_id FROM guild_members WHERE character_id = ?', [characterId]);
+    await tx.run('UPDATE ships SET ammunition = ammunition - ? WHERE id = ?',
+      [requirements.ammunition, ship.id]);
+    await tx.run('UPDATE outposts SET owner_id = ?, guild_id = ?, last_captured_at = ? WHERE id = ?',
+      [characterId, guild?.guild_id ?? null, now, outpost.id]);
+
+    return {
+      outpostId: Number(outpost.id), name: outpost.name, previousOwner: outpost.owner_name ?? null,
+      requirements, ammunition: Number(ship.ammunition) - requirements.ammunition,
+    };
+  });
+
+  gateway?.broadcastToWorld(instance, {
+    t: 'event', kind: 'outpostCaptured', outpostId: result.outpostId, name: result.name,
+    by: instance.players.get(`p${characterId}`)?.displayName ?? String(characterId), characterId,
+  });
+  return result;
+}
+
 export async function outpostsFor(worldId, characterId = null) {
   const db = getDatabase();
   const rows = characterId
-    ? await db.all(`SELECT o.*, c.name AS owner_name FROM outposts o
-      JOIN characters c ON c.id = o.owner_id WHERE o.world_id = ? AND o.owner_id = ?`, [worldId, characterId])
-    : await db.all(`SELECT o.*, c.name AS owner_name FROM outposts o
-      JOIN characters c ON c.id = o.owner_id WHERE o.world_id = ?`, [worldId]);
+    ? await db.all(`SELECT o.*, c.name AS owner_name, g.name AS guild_name, g.tag AS guild_tag FROM outposts o
+      JOIN characters c ON c.id = o.owner_id LEFT JOIN guilds g ON g.id = o.guild_id
+      WHERE o.world_id = ? AND o.owner_id = ?`, [worldId, characterId])
+    : await db.all(`SELECT o.*, c.name AS owner_name, g.name AS guild_name, g.tag AS guild_tag FROM outposts o
+      JOIN characters c ON c.id = o.owner_id LEFT JOIN guilds g ON g.id = o.guild_id
+      WHERE o.world_id = ?`, [worldId]);
 
   const out = [];
   for (const row of rows) {
@@ -613,9 +686,15 @@ export async function outpostsFor(worldId, characterId = null) {
     out.push({
       id: row.id, name: row.name, islandId: Number(row.island_id),
       x: Number(row.x), y: Number(row.y), ownerId: row.owner_id, guildId: row.guild_id,
-      ownerName: row.owner_name,
+      ownerName: row.owner_name, guildName: row.guild_name, guildTag: row.guild_tag,
+      // A trading company is the game's alliance: its members hold the same
+      // colour and contribute to one territorial score, while solo captains
+      // still get their own independent claim.
+      controlId: row.guild_id ? `guild:${row.guild_id}` : `captain:${row.owner_id}`,
+      controlName: row.guild_name ?? row.owner_name,
       buildings: buildings.map((building) => ({ kind: building.kind, level: Number(building.level) })),
       createdAt: Number(row.created_at),
+      capturedAt: row.last_captured_at ? Number(row.last_captured_at) : null,
     });
   }
   return out;
@@ -635,10 +714,13 @@ export async function seaControlFor(instance) {
     const strength = 1 + Math.min(1.5, development * 0.12);
     outpost.strength = Math.round(strength * 100) / 100;
     outpost.radius = Math.round(900 + strength * 520);
-    let owner = byOwner.get(String(outpost.ownerId));
+    let owner = byOwner.get(outpost.controlId);
     if (!owner) {
-      owner = { characterId: outpost.ownerId, name: outpost.ownerName, islands: 0, strength: 0 };
-      byOwner.set(String(outpost.ownerId), owner);
+      owner = {
+        controlId: outpost.controlId, characterId: outpost.ownerId, guildId: outpost.guildId,
+        name: outpost.controlName, islands: 0, strength: 0,
+      };
+      byOwner.set(outpost.controlId, owner);
     }
     owner.islands++;
     owner.strength += strength;

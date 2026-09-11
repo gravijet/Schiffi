@@ -442,6 +442,13 @@ function wireSocket() {
         toast(text, message.kind === 'warDeclared' ? 'warn' : 'info');
         break;
       }
+      case 'outpostCaptured': {
+        const text = t('company.outpostCaptured', { name: message.name });
+        state.game.systemMessage(`${message.by} · ${text}`);
+        if (String(message.characterId) !== String(state.character?.id)) toast(text, 'warn');
+        refreshSeaControl();
+        break;
+      }
       case 'tradeProposed':
       case 'tradeUpdated':
       case 'tradeSettled':

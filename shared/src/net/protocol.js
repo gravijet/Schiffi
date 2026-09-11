@@ -56,7 +56,7 @@ export const ACTIONS = [
   'warehouse.rent', 'warehouse.move', 'rumour.buy', 'treasure.dig',
   'friend.add', 'friend.remove', 'friend.accept',
   'code.redeem',
-  'route.create', 'route.delete', 'outpost.build', 'outpost.building',
+  'route.create', 'route.delete', 'outpost.build', 'outpost.building', 'outpost.capture',
   'insurance.buy', 'insurance.claim',
 ];
 

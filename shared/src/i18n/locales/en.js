@@ -406,6 +406,13 @@ export default {
     seaControl: 'Sea control',
     controlTarget: '{percent}% dominance target',
     controlClaimed: '{claimed} of {total} islands claimed',
+    contestedIslands: 'Contested islands',
+    defenceLevel: 'Defence level {level}',
+    captureRequirements: '{cannons} cannons · {ammunition} rounds',
+    distance: '{distance} away',
+    captureOutpost: 'Capture outpost',
+    captureConfirm: 'Attack {name}? Guns and ammunition are spent during the landing.',
+    outpostCaptured: '{name} captured.',
     tooCloseToPort: 'Too close to an existing port.',
   },
   settings: {

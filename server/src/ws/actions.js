@@ -89,6 +89,7 @@ const HANDLERS = {
   'route.delete': market.deleteRoute,
   'outpost.build': market.buildOutpost,
   'outpost.building': market.buildBuilding,
+  'outpost.capture': market.captureOutpost,
 };
 
 /**
@@ -111,7 +112,7 @@ const REFRESH_AFTER = new Set([
   'warehouse.rent', 'warehouse.move', 'rumour.buy', 'treasure.dig',
   'market.list', 'market.buy', 'market.buyout', 'market.bid', 'market.cancel',
   'insurance.buy', 'insurance.claim', 'route.create', 'route.delete',
-  'outpost.build', 'outpost.building',
+  'outpost.build', 'outpost.building', 'outpost.capture',
 ]);
 
 export async function dispatchAction(gateway, conn, name, payload) {

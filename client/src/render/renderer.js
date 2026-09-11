@@ -336,7 +336,7 @@ export class Renderer {
     for (const outpost of control.outposts) {
       if (outpost.x < bounds.x0 || outpost.x > bounds.x1 || outpost.y < bounds.y0 || outpost.y > bounds.y1) continue;
       const own = String(outpost.ownerId) === control.selfCharacterId;
-      const hue = stableHue(outpost.ownerId);
+      const hue = stableHue(outpost.controlId ?? outpost.ownerId);
       const p = this.worldToScreen(outpost.x, outpost.y);
       const radius = Math.max(12, Number(outpost.radius ?? 1200) * zoom);
       ctx.fillStyle = `hsla(${hue}, 72%, ${own ? 58 : 48}%, ${own ? 0.11 : 0.075})`;
