@@ -21,6 +21,7 @@ import { adminView } from './admin.js';
 import { docsView } from './docs.js';
 import { avatarCard, placeholder } from './avatar.js';
 import { countdown } from './panels/missions.js';
+import { icon } from './icons.js';
 
 /**
  * Every address the site answers to.
@@ -255,7 +256,7 @@ export class MainMenu {
     );
 
     add(this.account,
-      h('button.icon-link', { onClick: () => this.go('settings'), title: t('menu.settings') }, '\u2699'),
+      h('button.icon-link', { onClick: () => this.go('settings'), title: t('menu.settings') }, icon('settings')),
       this.session
         ? h('div.site-account__user', null,
           h('button.site-account__name', { onClick: () => this.go('profile') },

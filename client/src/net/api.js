@@ -286,6 +286,10 @@ export const api = {
   adminAds: (status) => request(`/api/admin/ads${status ? `?status=${status}` : ''}`),
   adminReviewAd: (id, status, note) =>
     request(`/api/admin/ads/${id}`, { method: 'POST', body: { status, note } }),
+  adminCodes: () => request('/api/admin/codes'),
+  adminCreateCode: (data) => request('/api/admin/codes', { method: 'POST', body: data }),
+  adminUpdateCode: (id, data) => request(`/api/admin/codes/${id}`, { method: 'PATCH', body: data }),
+  adminDeleteCode: (id) => request(`/api/admin/codes/${id}`, { method: 'DELETE' }),
 
   // --- admin --------------------------------------------------------------
   adminRoles: () => request('/api/admin/roles'),

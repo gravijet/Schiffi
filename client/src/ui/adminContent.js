@@ -6,9 +6,11 @@
  * three write through the real endpoints; nothing here is a mock-up.
  */
 import { h, add, clear, tabs, toast, modal, confirmDialog } from './dom.js';
-import { t, currentLocale } from '../state/i18n.js';
+import { t, tc, currentLocale } from '../state/i18n.js';
 import { api } from '../net/api.js';
 import { LOCALES } from '@schiffi/shared/i18n/index.js';
+
+const LIMIT_TYPES = ['once_per_character', 'once_per_account', 'unlimited'];
 
 const dateTime = (ms) => new Date(ms).toLocaleString(currentLocale());
 
@@ -301,4 +303,120 @@ export function adsTab(can) {
     list);
   load();
   return root;
+}
+
+// --- secret codes ------------------------------------------------------------
+
+export function codesTab(can) {
+  const root = h('div');
+  const list = h('div.stack');
+
+  const load = async () => {
+    clear(list);
+    list.append(h('p.small.muted', null, t('common.loading')));
+    try {
+      const { codes } = await api.adminCodes();
+      clear(list);
+      if (!codes.length) { list.append(h('p.small.muted', null, t('code.none'))); return; }
+      for (const code of codes) {
+        const expired = code.expiresAt && code.expiresAt < Date.now();
+        list.append(h('div.card', null,
+          h('div.row.row--between', null,
+            h('div.grow', null,
+              h('div.mono', null, code.code),
+              h('div.small.muted', null,
+                `${tc(code.rewardCoins)} ${t('unit.coins')} · ${t(`code.limit.${camel(code.limitType)}`)}`),
+              h('div.small.muted', null, t('code.usesSummary', { uses: code.uses, total: code.totalCoins })),
+              !code.active ? h('span.small.bad', null, t('code.deactivated'))
+                : expired ? h('span.small.warn', null, t('code.expired')) : null),
+            can('codes.manage')
+              ? h('div.row', null,
+                h('button.ghost', { onClick: () => codeEditor(code, load) }, t('common.edit')),
+                h('button.ghost.danger', {
+                  onClick: async () => {
+                    const yes = await confirmDialog({
+                      title: t('common.delete'), message: code.code,
+                      confirmLabel: t('common.delete'), danger: true,
+                    });
+                    if (!yes) return;
+                    try { await api.adminDeleteCode(code.id); load(); }
+                    catch (error) { toast(t(error.code ?? 'error.generic'), 'bad'); }
+                  },
+                }, t('common.delete')))
+              : null)));
+      }
+    } catch (error) {
+      clear(list);
+      list.append(h('p.bad', null, t(error.code ?? 'error.generic')));
+    }
+  };
+
+  add(root,
+    can('codes.manage')
+      ? h('div.row', null,
+        h('button.primary', { onClick: () => codeEditor(null, load) }, t('admin.createCode')))
+      : null,
+    list);
+  load();
+  return root;
+}
+
+/** 'once_per_character' -> 'oncePerCharacter', to match the locale key shape. */
+function camel(key) {
+  return String(key).replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+}
+
+/**
+ * The code editor.
+ *
+ * The code text itself is set once and never changes - editing it would
+ * silently orphan every past redemption logged against the old string, so a
+ * different code is a new code, created fresh and the old one deleted.
+ */
+function codeEditor(code, onDone) {
+  const text = h('input', { value: code?.code ?? '', maxLength: 200, disabled: Boolean(code) });
+  const reward = h('input', { type: 'number', min: 0, step: 1, value: code?.rewardCoins ?? 1000 });
+  const limitType = h('select', null,
+    ...LIMIT_TYPES.map((key) =>
+      h('option', { value: key, selected: (code?.limitType ?? 'once_per_character') === key },
+        t(`code.limit.${camel(key)}`))));
+  const active = h('input', {
+    type: 'checkbox', checked: code ? code.active : true, style: { width: 'auto' },
+  });
+  const expiresAt = h('input', {
+    type: 'date', value: code?.expiresAt ? new Date(code.expiresAt).toISOString().slice(0, 10) : '',
+  });
+
+  modal({
+    title: code ? t('common.edit') : t('admin.createCode'),
+    body: h('div.stack', null,
+      h('div.field', null, h('label', null, t('code.title')), text),
+      h('div.field', null, h('label', null, t('code.rewardCoins')), reward),
+      h('div.field', null, h('label', null, t('code.limitType')), limitType),
+      h('label.row', null, active, h('span', null, t('code.active'))),
+      h('div.field', null,
+        h('label', null, t('code.expiresAt')), expiresAt,
+        h('p.small.muted', null, t('code.noExpiry')))),
+    actions: [
+      { label: t('common.cancel') },
+      {
+        label: t('common.save'), primary: true,
+        onClick: async () => {
+          const payload = {
+            rewardCoins: Number(reward.value),
+            limitType: limitType.value,
+            active: active.checked,
+            expiresAt: expiresAt.value ? new Date(expiresAt.value).getTime() : null,
+          };
+          try {
+            if (code) await api.adminUpdateCode(code.id, payload);
+            else await api.adminCreateCode({ ...payload, code: text.value.trim() });
+            toast(t('common.save'), 'good');
+            onDone();
+          } catch (error) { toast(t(error.code ?? 'error.generic'), 'bad'); return false; }
+          return true;
+        },
+      },
+    ],
+  });
 }

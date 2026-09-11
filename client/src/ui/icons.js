@@ -65,13 +65,14 @@ const PATHS = {
     + '<path d="M8 4v3" stroke="currentColor" stroke-width="1.2"/>',
   code: '<path d="M2 8 5 3h4l3 5-3 5H5z" stroke="currentColor" stroke-width="1.4" fill="none"/>'
     + '<circle cx="8" cy="8" r="1.2" fill="currentColor"/>',
-  manual: '<path d="M2 2.5h5.2v11H2zM8.8 2.5H14v11H8.8z" stroke="currentColor" stroke-width="1.3" fill="none"/>'
-    + '<path d="M7.2 2.5v11M4 5h1.6M4 7.3h1.6M10.4 5H12M10.4 7.3H12" stroke="currentColor" stroke-width="1"/>',
   settings: '<circle cx="8" cy="8" r="2.1" stroke="currentColor" stroke-width="1.4" fill="none"/>'
     + '<path d="M8 1.6v2M8 12.4v2M1.6 8h2M12.4 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4"'
     + ' stroke="currentColor" stroke-width="1.4"/>',
   docs: '<path d="M3 1.5h10v13H3z" stroke="currentColor" stroke-width="1.3" fill="none"/>'
     + '<path d="M5.2 4.5h5.6M5.2 7h5.6M5.2 9.5h3.6" stroke="currentColor" stroke-width="1.1"/>',
+  close: '<path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.6"/>',
+  exit: '<path d="M6.5 2.5H3v11h3.5" stroke="currentColor" stroke-width="1.4" fill="none"/>'
+    + '<path d="M6 8h7.5M10.8 5l2.7 3-2.7 3" stroke="currentColor" stroke-width="1.4" fill="none"/>',
 };
 
 /**

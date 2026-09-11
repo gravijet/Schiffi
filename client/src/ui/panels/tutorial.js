@@ -11,6 +11,7 @@ import { h, add, clear, bar } from '../dom.js';
 import { t } from '../../state/i18n.js';
 import { api } from '../../net/api.js';
 import { settings } from '../../state/settings.js';
+import { icon } from '../icons.js';
 
 /** How often the checklist re-reads progress while it is on screen. */
 const POLL_MS = 4000;
@@ -108,7 +109,7 @@ export class Tutorial {
             onClick: () => { this.expanded = !this.expanded; this.render(); },
           }, this.expanded ? '▴' : '▾'),
           h('button.icon-btn', { title: t('tutorial.hide'), onClick: () => this.hide() }, '–'),
-          h('button.icon-btn', { title: t('tutorial.skip'), onClick: () => this.skip() }, '✕'))),
+          h('button.icon-btn', { title: t('tutorial.skip'), onClick: () => this.skip() }, icon('close')))),
       h('div.small.muted', null, t('tutorial.progress', { done: doneCount, total: state.total })),
       bar(doneCount, state.total, { warnAt: 0, badAt: 0 }));
 

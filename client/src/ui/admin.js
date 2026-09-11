@@ -12,7 +12,7 @@
 import { h, add, clear, toast, modal, confirmDialog, tabs, debounce } from './dom.js';
 import { t, td } from '../state/i18n.js';
 import { api } from '../net/api.js';
-import { supportTab, newsTab, adsTab } from './adminContent.js';
+import { supportTab, newsTab, adsTab, codesTab } from './adminContent.js';
 
 export function adminView(session) {
   const permissions = new Set(session?.permissions ?? []);
@@ -29,6 +29,7 @@ export function adminView(session) {
       can('support.view') && { key: 'support', label: t('support.title') },
       can('news.view') && { key: 'news', label: t('news.title') },
       can('ads.view') && { key: 'ads', label: t('ads.title') },
+      can('codes.view') && { key: 'codes', label: t('code.title') },
       can('system.status') && { key: 'system', label: t('server.status') },
       can('system.integrations') && { key: 'integrations', label: 'Cloudflare' },
     ].filter(Boolean);
@@ -43,8 +44,9 @@ export function adminView(session) {
             : active === 'support' ? supportTab(can)
               : active === 'news' ? newsTab(can)
                 : active === 'ads' ? adsTab(can)
-                  : active === 'integrations' ? integrationsTab()
-                    : systemTab()),
+                  : active === 'codes' ? codesTab(can)
+                    : active === 'integrations' ? integrationsTab()
+                      : systemTab()),
     );
   };
   render();

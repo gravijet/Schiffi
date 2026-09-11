@@ -15,6 +15,7 @@ import { pipeline } from 'node:stream/promises';
 import { activeInterstitial, countImpression, countClick } from '../services/interstitial.js';
 import { LOCALES, isValidLocale, negotiateLocale } from '@schiffi/shared/i18n/index.js';
 import config from '../config.js';
+import { listCodes, createCode, updateCode, deleteCode } from '../game/codes.js';
 
 const AD_PLACEMENTS = new Set(['menu', 'sidebar', 'reward']);
 
@@ -260,6 +261,39 @@ export function registerContentRoutes(router) {
     await db.run('DELETE FROM news_posts WHERE id = ?', [ctx.params.id]);
     return { ok: true };
   }, { permission: 'news.publish' });
+
+  // --- secret codes ---------------------------------------------------------
+
+  router.get('/api/admin/codes', async () => ({ codes: await listCodes() }),
+    { permission: 'codes.view' });
+
+  router.post('/api/admin/codes', async (ctx) => {
+    const body = await ctx.body();
+    if (!trim(body.code, 200)) throw badRequest();
+    const code = await createCode({
+      code: body.code,
+      rewardCoins: body.rewardCoins,
+      limitType: body.limitType,
+      active: body.active,
+      expiresAt: body.expiresAt,
+      userId: ctx.user.id,
+    });
+    return { code };
+  }, { permission: 'codes.manage' });
+
+  router.patch('/api/admin/codes/:id', async (ctx) => {
+    const body = await ctx.body();
+    const code = await updateCode(ctx.params.id, {
+      rewardCoins: body.rewardCoins,
+      limitType: body.limitType,
+      active: body.active,
+      expiresAt: body.expiresAt,
+    });
+    return { code };
+  }, { permission: 'codes.manage' });
+
+  router.delete('/api/admin/codes/:id', async (ctx) => deleteCode(ctx.params.id),
+    { permission: 'codes.manage' });
 
   // --- adverts ------------------------------------------------------------
   //

@@ -33,15 +33,13 @@ export function settingsView({ onChange } = {}) {
         { key: 'general', label: t('settings.general') },
         { key: 'graphics', label: t('settings.graphics') },
         { key: 'audio', label: t('settings.audio') },
-        { key: 'controls', label: t('settings.controls') },
         { key: 'network', label: t('settings.network') },
       ], active, (key) => { active = key; render(); }),
       h('div', { style: { paddingTop: '12px' } },
         active === 'general' ? generalTab(render)
           : active === 'graphics' ? graphicsTab(render, onChange)
             : active === 'audio' ? audioTab()
-              : active === 'controls' ? controlsTab(render)
-                : networkTab(render, onChange)),
+              : networkTab(render, onChange)),
     );
   };
   render();
@@ -180,45 +178,6 @@ function audioTab() {
         type: 'range', min: 0, max: 1, step: 0.05, value: settings.get(`audio.${key}`),
         onInput: (event) => settings.set(`audio.${key}`, Number(event.target.value)),
       }))));
-}
-
-function controlsTab(rerender) {
-  return h('div.stack', null,
-    h('div.card', null,
-      h('div.card__title', null, t('settings.keyboard')),
-      h('div.row', null, ...[['arrows', '← ↑ → ↓'], ['wasd', 'W A S D'], ['both', '← ↑ → ↓ + WASD']].map(([key, label]) =>
-        h(`button${settings.get('controls.keyboardLayout') === key ? '.primary' : '.ghost'}`, {
-          onClick: () => { settings.set('controls.keyboardLayout', key); rerender(); },
-        }, label)))),
-    h('div.card', null,
-      h('div.card__title', null, t('settings.gamepad')),
-      h('div.field', null,
-        h('label.row.row--between', null,
-          h('span', null, t('settings.deadzone')),
-          h('span.mono', null, settings.get('controls.deadzone').toFixed(2))),
-        h('input', {
-          type: 'range', min: 0.05, max: 0.35, step: 0.01, value: settings.get('controls.deadzone'),
-          onInput: (event) => { settings.set('controls.deadzone', Number(event.target.value)); rerender(); },
-        })),
-      h('label.row.row--between', { style: { cursor: 'pointer' } },
-        h('span', null, t('settings.invertY')),
-        h('input', {
-          type: 'checkbox', checked: settings.get('controls.invertY'),
-          onChange: (event) => settings.set('controls.invertY', event.target.checked),
-          style: { width: 'auto' },
-        }))),
-    h('div.card', null,
-      h('div.card__title', null, t('settings.touch')),
-      h('div.row', null, ...[['auto', 'Auto'], ['on', 'On'], ['off', 'Off']].map(([key, label]) =>
-        h(`button${settings.get('controls.virtualJoystick') === key ? '.primary' : '.ghost'}`, {
-          onClick: () => {
-            settings.set('controls.virtualJoystick', key);
-            document.documentElement.dataset.touch =
-              key === 'on' || (key === 'auto' && matchMedia('(pointer: coarse)').matches) ? 'on' : 'off';
-            rerender();
-          },
-        }, label)))),
-  );
 }
 
 function networkTab(rerender, onChange) {

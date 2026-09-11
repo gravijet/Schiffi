@@ -56,6 +56,8 @@ export const PERMISSIONS = [
   p('ads.submit', 'content', 'Upload own adverts and see their figures'),
   p('ads.view', 'content', 'View submitted adverts'),
   p('ads.approve', 'content', 'Approve or reject adverts'),
+  p('codes.view', 'content', 'View secret codes and their redemption counts'),
+  p('codes.manage', 'content', 'Create, edit and delete secret codes'),
 
   // --- support ------------------------------------------------------------
   p('support.view', 'support', 'View support tickets'),

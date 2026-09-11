@@ -24,6 +24,7 @@ import { registerGameplayRoutes, reloadEvents } from './routes/gameplay.js';
 import { registerContentRoutes } from './routes/content.js';
 import { MSG } from '@schiffi/shared/net/protocol.js';
 import { loadSystemSettings } from './services/systemSettings.js';
+import { ensureLegacyCodes } from './game/codes.js';
 
 const simulations = new Map();   // worldId -> Simulation
 
@@ -36,6 +37,7 @@ export async function bootstrap({ listen = true } = {}) {
   await loadSystemSettings();
   await syncPermissions();
   await pruneExpired();
+  await ensureLegacyCodes();
 
   const staticRoot = resolve(config.root, 'client/dist');
   const http = new HttpServer({ staticRoot });

@@ -1,21 +1,13 @@
 /**
- * The manual.
+ * The docs' content, as data.
  *
- * Written as structured content and rendered through the translator, so it
- * appears in whichever of the nine variants the player has chosen rather than
- * being a slab of untranslatable HTML.
+ * `docs.js` (the public, site-level documentation) lays this out as
+ * navigable pages - one source of truth for the game's mechanics, kept
+ * separate from the UI code that renders it so a numbers change never has to
+ * touch layout. There is no in-game duplicate of this any more: the
+ * in-game "manual" action just opens this same page.
  */
-import { h } from './dom.js';
-import { t } from '../state/i18n.js';
 
-/**
- * Section keys map onto locale keys that already exist for the UI.
- *
- * Exported so `docs.js` (the public, site-level documentation) can lay the
- * very same content out as navigable pages instead of a stacked scroll of
- * cards - one source of truth, so the in-game quick reference and the public
- * docs can never drift apart.
- */
 export const SECTIONS = [
   {
     title: 'mode.title',
@@ -23,23 +15,25 @@ export const SECTIONS = [
   },
   {
     title: 'hud.setSail',
-    lines: ['settings.keyboard', 'settings.gamepad', 'settings.touch'],
+    lines: ['hud.clickToSail'],
     extra: [
-      { term: '← ↑ → ↓ / W A S D', detail: 'hud.heading' },
       { term: '🖱️ / 👆', detail: 'hud.clickToSail' },
-      { term: 'Q / E', detail: 'hud.map' },
-      { term: 'Enter', detail: 'chat.send' },
-      { term: 'M', detail: 'hud.map' },
+      { term: 'M', detail: 'docs.toggleFollow' },
+      { term: 'Q / E', detail: 'docs.zoomOutIn' },
       { term: 'F3', detail: 'settings.perfOverlay' },
+      { term: 'Enter', detail: 'chat.send' },
     ],
   },
   {
     title: 'trade.buy',
-    lines: ['trade.buyPrice', 'trade.sellPrice', 'trade.demand', 'trade.supply', 'trade.tariff'],
+    lines: [
+      'trade.buyPrice', 'trade.sellPrice', 'trade.demand', 'trade.supply', 'trade.tariff',
+      'docs.priceModel', 'docs.seasonSwing',
+    ],
   },
   {
     title: 'cargo.title',
-    lines: ['cargo.perishable', 'cargo.lossNoRefund', 'ship.cargoProtect', 'ship.cooling'],
+    lines: ['cargo.perishable', 'cargo.lossNoRefund', 'ship.cargoProtect', 'ship.cooling', 'docs.perishability'],
   },
   {
     title: 'crew.title',
@@ -47,7 +41,7 @@ export const SECTIONS = [
   },
   {
     title: 'weather.storm',
-    lines: ['weather.stormApproaching', 'weather.iceField', 'ship.stormResist'],
+    lines: ['weather.stormApproaching', 'weather.iceField', 'ship.stormResist', 'docs.stormBelt', 'docs.iceBelt'],
   },
   {
     title: 'explore.title',
@@ -55,33 +49,29 @@ export const SECTIONS = [
   },
   {
     title: 'company.title',
-    lines: ['fleet.hint', 'company.routes', 'company.outposts', 'company.createRoute', 'company.buildOutpost'],
+    lines: [
+      'fleet.hint', 'company.routes', 'company.outposts', 'company.createRoute', 'company.buildOutpost',
+      'docs.founding', 'docs.outpostCost', 'docs.routeShip',
+    ],
   },
   {
     title: 'pvp.protected',
-    lines: ['hazard.pvpOff', 'hazard.pvpOn', 'pvp.bounty'],
+    lines: ['hazard.pvpOff', 'hazard.pvpOn', 'pvp.bounty', 'docs.combatRange', 'docs.boarding', 'docs.bountyMin'],
   },
   {
-    title: 'bank.title',
-    lines: ['bank.ingameOnly', 'bank.loan', 'bank.creditLimit', 'insurance.title'],
+    title: 'port.title',
+    lines: ['docs.dockRangeFact'],
+  },
+  {
+    title: 'tutorial.title',
+    lines: [
+      'docs.tutorialGoals.move', 'docs.tutorialGoals.buy', 'docs.tutorialGoals.sail',
+      'docs.tutorialGoals.dock', 'docs.tutorialGoals.sell', 'docs.tutorialGoals.crew',
+      'docs.tutorialGoals.contract', 'docs.tutorialGoals.deliver',
+    ],
+  },
+  {
+    title: 'code.title',
+    lines: ['docs.codesIntro', 'docs.codesLimit'],
   },
 ];
-
-export function manualView() {
-  return h('div', null,
-    h('h2', null, t('menu.manual')),
-    h('p.lede', null, t('app.tagline')),
-    ...SECTIONS.map((section) =>
-      h('div.card', null,
-        h('div.card__title', null, t(section.title)),
-        h('ul', { style: { margin: '0', paddingLeft: '18px' } },
-          ...section.lines.map((key) => h('li', null, t(key)))),
-        section.extra
-          ? h('dl.kv', { style: { marginTop: '10px' } },
-            ...section.extra.flatMap((row) => [
-              h('dt.mono', null, row.term),
-              h('dd', null, t(row.detail)),
-            ]))
-          : null)),
-  );
-}

@@ -12,6 +12,7 @@ import './styles/base.css';
 import './styles/layout.css';
 
 import { h, clear, toast } from './ui/dom.js';
+import { icon } from './ui/icons.js';
 import { settings } from './state/settings.js';
 import { loadLocale, t, onLocaleChange, detectLocale } from './state/i18n.js';
 import { chooseLanguage } from './ui/language.js';
@@ -21,7 +22,7 @@ import { MainMenu } from './ui/menu.js';
 import { GameUI } from './ui/game.js';
 import { Renderer } from './render/renderer.js';
 import { decodeTerrain, buildTerrainImage, buildMinimapImage } from './render/terrain.js';
-import { InputManager, shouldUseTouch } from './input/index.js';
+import { InputManager } from './input/index.js';
 import { socket } from './net/socket.js';
 import { api } from './net/api.js';
 import { CELL_SIZE, CELLS_X, CELLS_Y, FOG_X, FOG_Y, FOG_CELL_SIZE } from '@schiffi/shared/world/constants.js';
@@ -73,7 +74,6 @@ async function main() {
   document.documentElement.dataset.quality = settings.get('quality');
   document.documentElement.dataset.datasaver = settings.get('dataSaver') ? 'on' : 'off';
   document.documentElement.dataset.anim = settings.effective().uiAnimations ? 'on' : 'off';
-  document.documentElement.dataset.touch = shouldUseTouch(settings) ? 'on' : 'off';
 
   onLocaleChange(() => {
     state.menu?.render();
@@ -136,11 +136,11 @@ async function main() {
 /**
  * A captain on a phone should know what they are getting into.
  *
- * Touch controls exist and the game is playable on a phone, but a small
- * screen and a virtual joystick are a worse way to sail than a keyboard and a
- * proper map view - the operator wants that said plainly, not discovered the
- * hard way. Dismissing it only lasts the session: a coarse pointer is asked
- * about every fresh visit, never nagged at twice in the same one.
+ * Tapping the map to sail works the same as clicking it, but a small screen
+ * is still a worse map view than a bigger one - the operator wants that said
+ * plainly, not discovered the hard way. Dismissing it only lasts the
+ * session: a coarse pointer is asked about every fresh visit, never nagged
+ * at twice in the same one.
  */
 function showMobileNotice() {
   if (!matchMedia('(pointer: coarse)').matches) return;
@@ -152,7 +152,7 @@ function showMobileNotice() {
   };
   const banner = h('div.mobile-notice', null,
     h('span', null, t('app.mobileNotice')),
-    h('button.icon-btn', { onClick: dismiss, title: t('common.close') }, '✕'));
+    h('button.icon-btn', { onClick: dismiss, title: t('common.close') }, icon('close')));
   document.body.append(banner);
 }
 
@@ -269,7 +269,14 @@ async function startGame(character) {
   state.game = new GameUI({
     socket,
     renderer: state.renderer,
-    onLeave: () => { stopGame(); state.menu.mount(app); state.menu.render(); },
+    // `screen` lets the in-game "docs" action land straight on the docs
+    // page instead of wherever the menu was left off.
+    onLeave: (screen) => {
+      stopGame();
+      state.menu.mount(app);
+      if (screen) state.menu.go(screen);
+      else state.menu.render();
+    },
     // The gameplay screens change coins, cargo and crew; they ask for a
     // re-read rather than patching their own idea of the character.
     onRefresh: () => refreshCharacter(),
@@ -289,9 +296,10 @@ async function startGame(character) {
     settings, position: () => socket.selfPosition(), terrain: state.terrain,
   });
   state.input.addEventListener('destination', (event) => {
-    if (state.renderer) state.renderer.destination = event.detail;
+    if (!state.renderer) return;
+    state.renderer.destination = event.detail?.target ?? null;
+    state.renderer.path = event.detail?.path ?? null;
   });
-  state.input.attachJoystick(document.getElementById('joystick'));
   attachPointerControls(canvas);
   attachShortcuts();
 

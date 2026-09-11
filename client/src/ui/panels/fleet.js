@@ -11,11 +11,12 @@ import { h, add, clear, bar } from '../dom.js';
 import { t } from '../../state/i18n.js';
 import { api } from '../../net/api.js';
 import { settings } from '../../state/settings.js';
+import { icon } from '../icons.js';
 import { routeCard } from './company.js';
 
 export function fleetView(ctx, close) {
   const root = h('div.stack');
-  add(root, hintCard(), yourShipCard(ctx), h('div.card__title', null, t('fleet.routeShips')));
+  add(root, hintCard(ctx), yourShipCard(ctx), h('div.card__title', null, t('fleet.routeShips')));
 
   const routesPane = h('div.stack');
   add(root, routesPane);
@@ -40,15 +41,17 @@ export function fleetView(ctx, close) {
   return root;
 }
 
-function hintCard() {
+function hintCard(ctx) {
   if (settings.get('fleetHintSeen')) return null;
   const card = h('div.card', null,
     h('div.row.row--between', null,
-      h('p.small.muted', { style: { margin: 0 } }, t('fleet.hint')),
-      h('button.icon-btn', {
-        title: t('common.close'),
-        onClick: () => { settings.set('fleetHintSeen', true); card.remove(); },
-      }, '✕')));
+      h('p.small.muted', { style: { margin: 0 } }, t('fleet.hintShort')),
+      h('div.row', { style: { gap: '6px' } },
+        h('button.ghost.small', { onClick: () => ctx.openDocs() }, t('menu.docs')),
+        h('button.icon-btn', {
+          title: t('common.close'),
+          onClick: () => { settings.set('fleetHintSeen', true); card.remove(); },
+        }, icon('close')))));
   return card;
 }
 

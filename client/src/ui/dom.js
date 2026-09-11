@@ -115,6 +115,18 @@ export function toast(message, kind = 'info', ttl = 4200) {
  * Open a modal. Returns a handle with `close()`; the promise resolves with
  * whatever `close(value)` was called with, so callers can await a dialog.
  */
+/**
+ * The modal's own close glyph, kept local rather than imported from
+ * `icons.js` - that module imports `h` from here, and `dom.js` stays a leaf
+ * with no dependencies of its own.
+ */
+function closeIcon() {
+  return h('span.icon', {
+    html: '<svg viewBox="0 0 16 16" width="16" height="16" shape-rendering="crispEdges" aria-hidden="true">'
+      + '<path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.6"/></svg>',
+  });
+}
+
 export function modal({ title, body, actions = [], wide = false, dismissable = true, onClose } = {}) {
   let settle;
   const result = new Promise((resolve) => { settle = resolve; });
@@ -135,7 +147,9 @@ export function modal({ title, body, actions = [], wide = false, dismissable = t
   add(dialog,
     h('div.modal__head', null,
       h('div.modal__title', null, title ?? ''),
-      dismissable ? h('button.icon-btn', { onClick: () => close(undefined), title: 'Esc' }, '✕') : null),
+      dismissable
+        ? h('button.icon-btn', { onClick: () => close(undefined), title: 'Esc' }, closeIcon())
+        : null),
     h('div.modal__body', null, body),
     actions.length
       ? h('div.modal__foot', null, ...actions.map((action) =>

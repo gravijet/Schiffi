@@ -67,7 +67,13 @@ export async function dock({ instance, characterId, userId, payload }) {
     const port = instance.portsById.get(payload.portId);
     if (!port) throw fail('error.notFound', 'unknown port');
 
-    const distance = dist(Number(character.x), Number(character.y), port.x, port.y);
+    // character.x/y is the last persisted position, up to an in-game hour
+    // stale (see simulation.js persistPlayers). The live position kept in
+    // instance.players is authoritative for a connected ship.
+    const player = instance.players.get(`p${characterId}`);
+    const x = Number(player?.x ?? character.x);
+    const y = Number(player?.y ?? character.y);
+    const distance = dist(x, y, port.x, port.y);
     if (distance > DOCK_RANGE) throw fail('error.tooFar');
 
     await tx.run(

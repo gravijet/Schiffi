@@ -315,6 +315,15 @@ export class Gateway {
         await db.run('UPDATE ships SET hull = ?, sail = ? WHERE id = ?',
           [Number(player.hull) || 0, Number(player.sail) || 0, player.shipId]);
       }
+      // Distance is otherwise only flushed once per in-game hour
+      // (simulation.js persistPlayers); without this, sailing distance
+      // accrued since the last flush is lost on disconnect.
+      if (player.distance) {
+        await db.run(
+          'UPDATE player_stats SET distance = distance + ?, updated_at = ? WHERE character_id = ?',
+          [player.distance, Date.now(), player.characterId]);
+        player.distance = 0;
+      }
       if (player.fogDirty) await saveFog(player.characterId, player.fog);
     } catch (error) {
       console.error('[ws] failed to flush character on disconnect', error.message);

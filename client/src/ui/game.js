@@ -28,7 +28,6 @@ import { openTradePicker, partnersInHail, onTradeEvent } from './panels/playerTr
 import { portServicesView } from './panels/warehouse.js';
 import { friendsView } from './panels/friends.js';
 import { icon } from './icons.js';
-import { manualView } from './manual.js';
 
 export class GameUI {
   constructor({ socket, renderer, onLeave, onRefresh, refreshRoutes }) {
@@ -50,7 +49,6 @@ export class GameUI {
     this.topbar = h('div#topbar');
     this.perf = h('div#perf', { hidden: !settings.get('perfOverlay') });
     this.actionbar = h('div#actionbar');
-    this.joystick = h('div#joystick', null, h('div.knob'));
     this.tutorial = new Tutorial(this);
     this.minimapWrap = h('div#minimap-wrap', null,
       h('canvas#minimap', { width: 256, height: 160 }));
@@ -67,7 +65,7 @@ export class GameUI {
 
     add(this.root,
       this.topbar, this.perf, this.shipPanel, this.portPanel,
-      this.chatPanel, this.minimapWrap, this.actionbar, this.joystick);
+      this.chatPanel, this.minimapWrap, this.actionbar);
     this.tutorial.mount(this.root);
   }
 
@@ -102,8 +100,8 @@ export class GameUI {
       stat(t('hud.hull'), '—', 'stat-hull'),
       stat(t('hud.speed'), '0', 'stat-speed'),
       h('div.grow'),
-      h('button.icon-btn', { title: t('menu.settings'), onClick: () => this.openSettings() }, '⚙'),
-      h('button.icon-btn', { title: t('common.back'), onClick: () => this.onLeave?.() }, '⏻'),
+      h('button.icon-btn', { title: t('menu.settings'), onClick: () => this.openSettings() }, icon('settings')),
+      h('button.icon-btn', { title: t('common.back'), onClick: () => this.onLeave?.() }, icon('exit')),
     );
   }
 
@@ -221,14 +219,14 @@ export class GameUI {
       this.actionButton('act-adreward', 'adreward', t('ads.watchForCoins'), () => this.openAdReward()),
       this.actionButton('act-tutorial', 'tutorial', t('tutorial.title'), () => this.tutorial.resume()),
       this.actionButton('act-code', 'code', t('code.title'), () => this.openCodeDialog()),
-      this.actionButton('act-manual', 'manual', t('menu.manual'), () => this.openManual()),
+      this.actionButton('act-manual', 'docs', t('menu.docs'), () => this.openDocs()),
       this.actionButton('act-settings', 'settings', t('menu.settings'), () => this.openSettings()),
     );
   }
 
-  openManual() {
-    modal({ title: t('menu.manual'), wide: true, body: manualView(),
-      actions: [{ label: t('common.close') }] });
+  /** No in-game manual any more: every explanation lives on the docs page. */
+  openDocs() {
+    this.onLeave?.('docs');
   }
 
   // --- panels -------------------------------------------------------------

@@ -25,7 +25,6 @@ export const GRAPHICS_OPTIONS = {
   waves:           { type: 'range', min: 0, max: 1, step: 0.05, presets: [0, 0.2, 0.5, 0.8, 1] },
   shadows:         { type: 'bool', presets: [false, false, true, true, true] },
   lighting:        { type: 'range', min: 0, max: 1, step: 0.05, presets: [0, 0.35, 0.7, 0.9, 1] },
-  antialiasing:    { type: 'bool', presets: [false, false, true, true, true] },
   postprocessing:  { type: 'range', min: 0, max: 1, step: 0.05, presets: [0, 0, 0.4, 0.7, 1] },
   weatherEffects:  { type: 'range', min: 0, max: 1, step: 0.05, presets: [0, 0.3, 0.6, 0.85, 1] },
   fog:             { type: 'range', min: 0, max: 1, step: 0.05, presets: [0, 0.25, 0.6, 0.85, 1] },
@@ -54,12 +53,6 @@ export const DEFAULTS = {
   dataSaver: false,
   perfOverlay: false,
   audio: { master: 0.7, music: 0.5, sfx: 0.8 },
-  controls: {
-    deadzone: 0.12,
-    invertY: false,
-    virtualJoystick: 'auto',   // auto | on | off
-    keyboardLayout: 'arrows',  // arrows | wasd | both
-  },
   minimap: true,
   chatOpen: true,
   // Put the tutorial checklist away without giving up on it: it can be

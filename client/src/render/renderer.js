@@ -22,11 +22,25 @@ const MIN_ZOOM = 0.06;
 const MAX_ZOOM = 3.5;
 const DEFAULT_SHIP_VISUAL = { lengthMul: 1, beamMul: 1, masts: 1 };
 
+// Reference scale the pixel-art ship sprites are built at (see
+// `buildShipSprite` at the bottom of this file) - unrelated to any one
+// ship's actual on-screen size, which is applied afterwards as a uniform
+// `ctx.scale`.
+const SHIP_SPRITE_REF_SIZE = 10;
+// Deliberately low: this is what makes the ship read as blocky pixel art
+// once scaled up, rather than a smooth vector hull.
+const SHIP_SPRITE_PX_PER_UNIT = 1.4;
+const shipSpriteCache = new Map();
+
 export class Renderer {
   constructor(canvas, { settings }) {
     this.canvas = canvas;
     this.settings = settings;
-    this.ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+    // desynchronized: true used to be set here for lower input latency, but it
+    // lets the browser present a backbuffer that is still being written to -
+    // on some GPU/compositor combinations that shows up as full-screen
+    // tearing/corruption. Not worth it for a top-down 2D map.
+    this.ctx = canvas.getContext('2d', { alpha: false });
 
     this.camera = { x: CELLS_X * CELL_SIZE / 2, y: CELLS_Y * CELL_SIZE / 2, zoom: 0.35 };
     this.targetZoom = this.camera.zoom;
@@ -44,6 +58,7 @@ export class Renderer {
     this.routes = [];
     this.self = null;
     this.destination = null;
+    this.path = null;
     this.wind = { a: 0, s: 0 };
     this.daylight = 1;
 
@@ -78,7 +93,10 @@ export class Renderer {
     this.canvas.width = Math.max(320, Math.round(cssWidth * dpr * scale));
     this.canvas.height = Math.max(240, Math.round(cssHeight * dpr * scale));
     this.pixelScale = this.canvas.width / cssWidth;
-    this.ctx.imageSmoothingEnabled = Boolean(this.graphics.antialiasing);
+    // Pixel-art crispness is not a quality tradeoff: nearest-neighbour scaling
+    // stays on at every quality tier. Individual overlays (fog) opt back into
+    // smoothing locally around their own drawImage call.
+    this.ctx.imageSmoothingEnabled = false;
   }
 
   setTerrain(bitmap) { this.terrainBitmap = bitmap; }
@@ -197,7 +215,7 @@ export class Renderer {
     const scale = this.pixelScale;
 
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
-    ctx.imageSmoothingEnabled = Boolean(g.antialiasing);
+    ctx.imageSmoothingEnabled = false;
 
     this.drawWater(ctx, g);
     this.drawTerrain(ctx, g);
@@ -238,10 +256,8 @@ export class Renderer {
     const dh = sh * CELL_SIZE * this.camera.zoom;
 
     // One image pixel is one terrain cell, so nearest-neighbour (no
-    // smoothing) reads as crisp pixel-art coastlines at any zoom - that is
-    // now the default, the same as it always was for the minimap. Smoothing
-    // is opt-in through the antialiasing setting, not forced on near max
-    // zoom the way it used to be.
+    // smoothing) reads as crisp pixel-art coastlines at any zoom, at every
+    // quality tier - the same as it always was for the minimap.
     ctx.drawImage(this.terrainBitmap, sx, sy, sw, sh, topLeft.x, topLeft.y, dw, dh);
   }
 
@@ -532,25 +548,25 @@ export class Renderer {
   }
 
   /**
-   * The line from the ship to the click-to-sail waypoint.
-   *
-   * This is the straight intent line, not the raycast-avoidance curve
-   * `steerAroundLand` actually follows around islands - drawing the real
-   * curve would need to duplicate steering logic here for no real benefit;
-   * the straight line already answers "which way am I headed".
+   * The click-to-sail route: the real path the ship is following (see
+   * `InputManager.setDestination`/`findPath` in `input/pathfinding.js`),
+   * not a straight guess - drawn as the actual polyline through every
+   * waypoint, so a route that bends around an island shows the bend.
    */
   drawCourseLine(ctx, g) {
-    if (!this.self || !this.destination) return;
-    const from = this.worldToScreen(this.self.x, this.self.y);
-    const to = this.worldToScreen(this.destination.x, this.destination.y);
+    if (!this.self || !this.path || !this.path.length) return;
     ctx.save();
     ctx.strokeStyle = UI.courseLine;
     ctx.lineWidth = Math.max(1, 1.5 * this.camera.zoom);
     ctx.setLineDash([6, 10]);
     ctx.lineDashOffset = -this.time * 30;
     ctx.beginPath();
-    ctx.moveTo(from.x, from.y);
-    ctx.lineTo(to.x, to.y);
+    const start = this.worldToScreen(this.self.x, this.self.y);
+    ctx.moveTo(start.x, start.y);
+    for (const point of this.path) {
+      const p = this.worldToScreen(point.x, point.y);
+      ctx.lineTo(p.x, p.y);
+    }
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.restore();
@@ -617,62 +633,27 @@ export class Renderer {
   /**
    * One ship.
    *
-   * A blocky, flat-shaded hull rather than a smooth tapered triangle - the
-   * same pixel-art language as `icons.js`: a handful of straight edges, one
-   * flat fill plus one darker waterline band, a hard outline, no gradient.
-   * `visual` (see `shipVisuals.js`) only scales the hull and picks the mast
-   * count, so the LOD scheme stays exactly what it was: a filled silhouette
-   * at any zoom, an outline/masts/waterline once zoom and the `shipDetail`
-   * setting allow it. That is why hundreds of ships stay cheap to draw.
+   * A genuinely pixelated sprite, not a smooth vector hull: `buildShipSprite`
+   * (bottom of this file) rasterizes the hull once, at a deliberately low
+   * fixed resolution, into a tiny offscreen canvas; here that bitmap is
+   * scaled up to the ship's actual on-screen size with nearest-neighbour
+   * sampling (the canvas's `imageSmoothingEnabled = false`, set globally in
+   * `draw()`), which is what makes it read as blocky pixel art. `visual`
+   * (see `shipVisuals.js`) picks the hull shape and mast count; sprites are
+   * cached per shape+colour+detail tier, so hundreds of ships on screen still
+   * cost one cheap `drawImage` each rather than a fresh rasterization.
    */
   drawShip(ctx, x, y, heading, colour, zoom, detail, entity = null, isSelf = false, visual = DEFAULT_SHIP_VISUAL) {
     const size = clamp(4 + 10 * zoom, 3, isSelf ? 16 : 13) * (0.7 + detail * 0.5);
-    const len = size * visual.lengthMul;
-    const beam = size * 0.55 * visual.beamMul;
+    const detailed = detail > 0.35 && zoom > 0.35;
+    const sprite = getShipSprite(visual, colour, detailed);
+    const scale = size / SHIP_SPRITE_REF_SIZE;
 
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(heading);
-
-    // A blocky hull: pointed bow, flat stern, square shoulders - not a
-    // smooth-tapered triangle.
-    ctx.beginPath();
-    ctx.moveTo(len, 0);
-    ctx.lineTo(len * 0.45, beam);
-    ctx.lineTo(-len * 0.65, beam);
-    ctx.lineTo(-len * 0.85, beam * 0.45);
-    ctx.lineTo(-len * 0.85, -beam * 0.45);
-    ctx.lineTo(-len * 0.65, -beam);
-    ctx.lineTo(len * 0.45, -beam);
-    ctx.closePath();
-    ctx.fillStyle = colour;
-    ctx.fill();
-
-    if (detail > 0.35 && zoom > 0.35) {
-      // Flat two-tone shading instead of a gradient: one darker waterline
-      // band along the hull's lower half.
-      ctx.save();
-      ctx.clip();
-      ctx.fillStyle = darken(colour, 0.32);
-      ctx.fillRect(-len, beam * 0.15, len * 2, beam);
-      ctx.restore();
-
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = 'rgba(10, 18, 25, 0.8)';
-      ctx.stroke();
-
-      // Mast(s): short perpendicular bars, which read as rigging at a glance.
-      const masts = visual.masts ?? 1;
-      ctx.strokeStyle = 'rgba(236, 227, 210, 0.85)';
-      ctx.lineWidth = Math.max(1, size * 0.13);
-      ctx.beginPath();
-      for (let m = 0; m < masts; m++) {
-        const mx = masts === 1 ? -len * 0.05 : len * 0.25 - m * len * 0.55;
-        ctx.moveTo(mx, -beam * 0.9);
-        ctx.lineTo(mx, beam * 0.9);
-      }
-      ctx.stroke();
-    }
+    ctx.scale(scale, scale);
+    ctx.drawImage(sprite.canvas, sprite.minX, sprite.minY, sprite.width, sprite.height);
     ctx.restore();
 
     // Health bar and name for other ships, only when zoomed in.
@@ -860,6 +841,87 @@ function formatCountdown(ms) {
   if (totalSeconds >= 3600) return `${Math.ceil(totalSeconds / 3600)}h`;
   if (totalSeconds >= 60) return `${Math.ceil(totalSeconds / 60)}m`;
   return `${totalSeconds}s`;
+}
+
+/**
+ * Rasterize one ship shape+colour into a tiny offscreen bitmap, cached by
+ * `getShipSprite` below. Everything is drawn at `SHIP_SPRITE_REF_SIZE`, a
+ * fixed size unrelated to any one ship's actual on-screen size - `drawShip`
+ * applies that afterwards as one uniform `ctx.scale`, and the low
+ * `SHIP_SPRITE_PX_PER_UNIT` is what turns the upscale into visible square
+ * pixels instead of a smooth enlargement.
+ */
+function buildShipSprite(visual, colour, detailed) {
+  const len = SHIP_SPRITE_REF_SIZE * visual.lengthMul;
+  const beam = SHIP_SPRITE_REF_SIZE * 0.55 * visual.beamMul;
+  const pad = Math.max(len, beam) * 0.18;
+  const minX = -len * 0.85 - pad;
+  const maxX = len + pad;
+  const minY = -beam * 1.05 - pad;
+  const maxY = beam * 1.05 + pad;
+  const px = SHIP_SPRITE_PX_PER_UNIT;
+  const width = Math.max(4, Math.round((maxX - minX) * px));
+  const height = Math.max(4, Math.round((maxY - minY) * px));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const c = canvas.getContext('2d');
+  c.imageSmoothingEnabled = false;
+  c.translate(-minX * px, -minY * px);
+  c.scale(px, px);
+
+  // Same blocky hull as before: pointed bow, flat stern, square shoulders.
+  c.beginPath();
+  c.moveTo(len, 0);
+  c.lineTo(len * 0.45, beam);
+  c.lineTo(-len * 0.65, beam);
+  c.lineTo(-len * 0.85, beam * 0.45);
+  c.lineTo(-len * 0.85, -beam * 0.45);
+  c.lineTo(-len * 0.65, -beam);
+  c.lineTo(len * 0.45, -beam);
+  c.closePath();
+  c.fillStyle = colour;
+  c.fill();
+
+  if (detailed) {
+    // Flat two-tone shading instead of a gradient: one darker waterline
+    // band along the hull's lower half.
+    c.save();
+    c.clip();
+    c.fillStyle = darken(colour, 0.32);
+    c.fillRect(-len, beam * 0.15, len * 2, beam);
+    c.restore();
+
+    c.lineWidth = 1 / px;
+    c.strokeStyle = 'rgba(10, 18, 25, 0.8)';
+    c.stroke();
+
+    // Mast(s): short perpendicular bars, which read as rigging at a glance.
+    const masts = visual.masts ?? 1;
+    c.strokeStyle = 'rgba(236, 227, 210, 0.85)';
+    c.lineWidth = Math.max(1 / px, SHIP_SPRITE_REF_SIZE * 0.13);
+    c.beginPath();
+    for (let m = 0; m < masts; m++) {
+      const mx = masts === 1 ? -len * 0.05 : len * 0.25 - m * len * 0.55;
+      c.moveTo(mx, -beam * 0.9);
+      c.lineTo(mx, beam * 0.9);
+    }
+    c.stroke();
+  }
+
+  return { canvas, minX, minY, width: maxX - minX, height: maxY - minY };
+}
+
+/** Cached by exact shape+colour+detail tier - hundreds of ships share a handful of these. */
+function getShipSprite(visual, colour, detailed) {
+  const key = `${visual.lengthMul}|${visual.beamMul}|${visual.masts}|${colour}|${detailed ? 1 : 0}`;
+  let sprite = shipSpriteCache.get(key);
+  if (!sprite) {
+    sprite = buildShipSprite(visual, colour, detailed);
+    shipSpriteCache.set(key, sprite);
+  }
+  return sprite;
 }
 
 /**

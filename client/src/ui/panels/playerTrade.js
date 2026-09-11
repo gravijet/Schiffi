@@ -8,6 +8,7 @@
  * confirmations, and the panel says so.
  */
 import { h, add, clear, toast, modal } from '../dom.js';
+import { icon } from '../icons.js';
 import { t, tc } from '../../state/i18n.js';
 import { api } from '../../net/api.js';
 import { goodById } from '@schiffi/shared/data/goods.js';
@@ -88,7 +89,7 @@ export function openTrade(ctx, offer) {
         editable
           ? h('button.icon-btn', {
             onClick: () => push(goods.filter((entry) => entry.goodId !== lot.goodId), coins),
-          }, '✕')
+          }, icon('close'))
           : null));
     if (coins > 0) {
       rows.unshift(h('div.row.row--between', null,

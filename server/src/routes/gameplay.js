@@ -360,15 +360,21 @@ export function registerGameplayRoutes(router, { gateway }) {
 async function tutorialFor(characterId) {
   const db = getDatabase();
   const stats = await db.get('SELECT * FROM player_stats WHERE character_id = ?', [characterId]);
-  const character = await db.get('SELECT active_ship_id FROM characters WHERE id = ?', [characterId]);
+  const character = await db.get('SELECT active_ship_id, world_id FROM characters WHERE id = ?', [characterId]);
   const crew = await db.get('SELECT COUNT(*) AS n FROM crew_members WHERE ship_id = ?',
     [character?.active_ship_id ?? null]);
   const taken = await db.get('SELECT COUNT(*) AS n FROM missions WHERE taken_by = ?', [characterId]);
   const done = await db.get(
     "SELECT COUNT(*) AS n FROM missions WHERE taken_by = ? AND status = 'done'", [characterId]);
 
+  // player_stats.distance only catches up once per in-game hour (see
+  // simulation.js persistPlayers). Add whatever the live entity has sailed
+  // since the last flush so a connected player's checklist never lags.
+  const instance = character?.world_id ? getLoadedWorld(character.world_id) : null;
+  const liveDistance = instance?.players?.get(`p${characterId}`)?.distance ?? 0;
+
   const progress = tutorialProgress({
-    distance: Number(stats?.distance ?? 0),
+    distance: Number(stats?.distance ?? 0) + Number(liveDistance),
     goods_bought: Number(stats?.goods_bought ?? 0),
     goods_sold: Number(stats?.goods_sold ?? 0),
     ports_visited: Number(stats?.ports_visited ?? 0),

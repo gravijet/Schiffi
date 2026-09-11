@@ -105,30 +105,64 @@ const LINE = 'rgba(128, 234, 210, 0.55)';
 const HULL = 'rgba(217, 231, 232, 0.82)';
 
 /**
- * One flat ship silhouette: the exact hull-plus-sail shape the live renderer
- * draws for every ship in the game (see render/renderer.js#drawShip), just
- * bigger and undecorated. Familiar on purpose - a returning player should
- * recognise it before they have even clicked past this screen.
+ * One flat ship silhouette: the same pixel-art sprite trick the live
+ * renderer uses for every ship in the game (see
+ * render/renderer.js#buildShipSprite) - rasterized once at a small fixed
+ * resolution, then scaled up with nearest-neighbour sampling so it reads as
+ * blocky pixel art rather than a smooth vector hull. Familiar on purpose - a
+ * returning player should recognise it before they have even clicked past
+ * this screen.
  */
+const SILHOUETTE_REF_SIZE = 10;
+const SILHOUETTE_PX_PER_UNIT = 1.4;
+let silhouetteSprite = null;
+
+function buildSilhouetteSprite() {
+  const size = SILHOUETTE_REF_SIZE;
+  const pad = size * 0.12;
+  const minX = -size * 0.7 - pad;
+  const maxX = size + pad;
+  const minY = -size * 0.95 - pad;
+  const maxY = size * 0.55 + pad;
+  const px = SILHOUETTE_PX_PER_UNIT;
+  const width = Math.max(4, Math.round((maxX - minX) * px));
+  const height = Math.max(4, Math.round((maxY - minY) * px));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const c = canvas.getContext('2d');
+  c.imageSmoothingEnabled = false;
+  c.translate(-minX * px, -minY * px);
+  c.scale(px, px);
+
+  c.beginPath();
+  c.moveTo(size, 0);
+  c.lineTo(-size * 0.7, size * 0.55);
+  c.lineTo(-size * 0.45, 0);
+  c.lineTo(-size * 0.7, -size * 0.55);
+  c.closePath();
+  c.fillStyle = HULL;
+  c.fill();
+  c.beginPath();
+  c.moveTo(-size * 0.08, -size * 0.95);
+  c.lineTo(-size * 0.08, size * 0.15);
+  c.strokeStyle = HULL;
+  c.lineWidth = Math.max(1 / px, size * 0.1);
+  c.stroke();
+
+  return { canvas, minX, minY, width: maxX - minX, height: maxY - minY };
+}
+
 function drawShipSilhouette(ctx, x, y, size, facingRight) {
+  if (!silhouetteSprite) silhouetteSprite = buildSilhouetteSprite();
   const dir = facingRight ? 1 : -1;
+  const scale = size / SILHOUETTE_REF_SIZE;
   ctx.save();
   ctx.translate(x, y);
-  ctx.scale(dir, 1);
-  ctx.beginPath();
-  ctx.moveTo(size, 0);
-  ctx.lineTo(-size * 0.7, size * 0.55);
-  ctx.lineTo(-size * 0.45, 0);
-  ctx.lineTo(-size * 0.7, -size * 0.55);
-  ctx.closePath();
-  ctx.fillStyle = HULL;
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(-size * 0.08, -size * 0.95);
-  ctx.lineTo(-size * 0.08, size * 0.15);
-  ctx.strokeStyle = HULL;
-  ctx.lineWidth = Math.max(1, size * 0.1);
-  ctx.stroke();
+  ctx.scale(dir * scale, scale);
+  ctx.drawImage(silhouetteSprite.canvas, silhouetteSprite.minX, silhouetteSprite.minY,
+    silhouetteSprite.width, silhouetteSprite.height);
   ctx.restore();
 }
 
@@ -174,6 +208,9 @@ function paintScene(canvas, pointer) {
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // Resizing the backing store resets context state, including this -
+    // reaffirm it so the pixel-art ship sprites stay crisp, not smoothed.
+    ctx.imageSmoothingEnabled = false;
   };
   resize();
   window.addEventListener('resize', resize);
